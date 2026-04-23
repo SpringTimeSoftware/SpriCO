@@ -8,22 +8,28 @@ import {
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 import { targetsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
-import type { TargetInstance } from '../../types'
+import type { TargetConfigView, TargetInstance } from '../../types'
 import CreateTargetDialog from './CreateTargetDialog'
 import TargetTable from './TargetTable'
+import ViewTargetDialog from './ViewTargetDialog'
 import { useTargetConfigStyles } from './TargetConfig.styles'
 
 interface TargetConfigProps {
   activeTarget: TargetInstance | null
-  onSetActiveTarget: (target: TargetInstance) => void
+  onSetActiveTarget: (target: TargetInstance | null) => void
+  onOpenTargetHelp?: () => void
 }
 
-export default function TargetConfig({ activeTarget, onSetActiveTarget }: TargetConfigProps) {
+export default function TargetConfig({ activeTarget, onSetActiveTarget, onOpenTargetHelp }: TargetConfigProps) {
   const styles = useTargetConfigStyles()
   const [targets, setTargets] = useState<TargetInstance[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [viewDialogOpen, setViewDialogOpen] = useState(false)
+  const [viewLoading, setViewLoading] = useState(false)
+  const [viewError, setViewError] = useState<string | null>(null)
+  const [viewTargetConfig, setViewTargetConfig] = useState<TargetConfigView | null>(null)
 
   // Retry fetching targets a few times with backoff. The Vite dev proxy
   // returns 502 while the backend is still starting, so a single failed
@@ -54,8 +60,67 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
     fetchTargets()
   }, [fetchTargets])
 
+  useEffect(() => {
+    if (activeTarget || targets.length === 0) {
+      return
+    }
+    const persistedActive = targets.find(target => target.is_active)
+    if (persistedActive) {
+      onSetActiveTarget(persistedActive)
+    }
+  }, [activeTarget, onSetActiveTarget, targets])
+
   const handleTargetCreated = async () => {
     setDialogOpen(false)
+    await fetchTargets()
+  }
+
+  const handleSetActiveTarget = async (target: TargetInstance) => {
+    try {
+      const activated = await targetsApi.activateTarget(target.target_registry_name)
+      onSetActiveTarget(activated)
+      await fetchTargets()
+    } catch (err) {
+      setError(toApiError(err).detail)
+    }
+  }
+
+  const handleViewTarget = async (target: TargetInstance) => {
+    setViewDialogOpen(true)
+    setViewLoading(true)
+    setViewError(null)
+    setViewTargetConfig(null)
+    try {
+      const config = await targetsApi.getTargetConfig(target.target_registry_name)
+      setViewTargetConfig(config)
+    } catch (err) {
+      setViewError(toApiError(err).detail)
+    } finally {
+      setViewLoading(false)
+    }
+  }
+
+  const handleArchiveTarget = async (target: TargetInstance) => {
+    const label = target.display_name || target.target_registry_name
+    if (!window.confirm(`Archive target "${label}"? It will be hidden from target selection but kept in storage.`)) {
+      return
+    }
+    try {
+      await targetsApi.archiveTarget(target.target_registry_name, 'Archived from target configuration')
+      if (activeTarget?.target_registry_name === target.target_registry_name) {
+        // The backend clears active state. Keep the current page state in sync.
+        const remaining = targets.filter(item => item.target_registry_name !== target.target_registry_name)
+        const nextActive = remaining.find(item => item.is_active) ?? null
+        onSetActiveTarget(nextActive)
+      }
+      await fetchTargets()
+    } catch (err) {
+      setError(toApiError(err).detail)
+    }
+  }
+
+  const handleTargetConfigSaved = async (config: TargetConfigView) => {
+    setViewTargetConfig(config)
     await fetchTargets()
   }
 
@@ -69,6 +134,12 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
           </Text>
         </div>
         <div className={styles.headerActions}>
+          <Button
+            appearance="subtle"
+            onClick={onOpenTargetHelp}
+          >
+            Which target should I use?
+          </Button>
           <Button
             appearance="subtle"
             icon={<ArrowSyncRegular />}
@@ -126,7 +197,9 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
         <TargetTable
           targets={targets}
           activeTarget={activeTarget}
-          onSetActiveTarget={onSetActiveTarget}
+          onSetActiveTarget={handleSetActiveTarget}
+          onViewTarget={handleViewTarget}
+          onArchiveTarget={handleArchiveTarget}
         />
       )}
 
@@ -134,6 +207,19 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
         onCreated={handleTargetCreated}
+      />
+
+      <ViewTargetDialog
+        open={viewDialogOpen}
+        targetConfig={viewTargetConfig}
+        loading={viewLoading}
+        error={viewError}
+        onSaved={handleTargetConfigSaved}
+        onClose={() => {
+          setViewDialogOpen(false)
+          setViewTargetConfig(null)
+          setViewError(null)
+        }}
       />
     </div>
   )

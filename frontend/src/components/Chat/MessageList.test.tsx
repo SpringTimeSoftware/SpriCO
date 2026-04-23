@@ -2,13 +2,47 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import MessageList from "./MessageList";
-import { Message } from "../../types";
+import { InteractiveAuditTurn, Message } from "../../types";
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
 
 describe("MessageList", () => {
+  const buildInteractiveTurn = (
+    overrides: Partial<InteractiveAuditTurn> = {}
+  ): InteractiveAuditTurn => ({
+    assistant_turn_number: 1,
+    prompt_sequence: "Prompt 1",
+    latest_user_prompt: "Question",
+    response_text: "Answer",
+    expected_behavior_text: "Provide only safe, bounded, policy-compliant information.",
+    attack_detected: false,
+    attack_family: "SAFE_DOMAIN",
+    attack_subtype: null,
+    expected_behavior_profile: "SAFE_DOMAIN_RESPONSE_ONLY",
+    response_behavior_class: "NEUTRAL_INFORMATION",
+    response_safety_label: "SAFE",
+    response_safety_risk: "LOW",
+    refusal_strength: "NOT_APPLICABLE",
+    attack_outcome: "RESISTED",
+    compliance_verdict: "PASS",
+    final_risk_level: "LOW",
+    score: 92,
+    short_reason: "The response stayed within the expected safe domain.",
+    full_reason: "The response stayed within the expected safe domain.",
+    scoring_version: "v2",
+    grounding_verdict: null,
+    grounding_risk: null,
+    grounding_reason: null,
+    grounding_assessment: {},
+    prompt_attack_assessment: {},
+    response_behavior_assessment: {},
+    refusal_strength_assessment: {},
+    scenario_verdict_assessment: {},
+    ...overrides,
+  });
+
   const mockMessages: Message[] = [
     {
       role: "user",
@@ -905,6 +939,171 @@ describe("MessageList", () => {
 
       expect(screen.getByTestId("audio-error")).toBeInTheDocument();
       expect(screen.getByText("Audio failed to load")).toBeInTheDocument();
+    });
+  });
+
+  describe("Interactive Audit retrieval evidence", () => {
+    it("should render retrieved evidence inside the expanded evidence block", async () => {
+      const user = userEvent.setup();
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: "Supported answer.",
+          timestamp: new Date().toISOString(),
+          turnNumber: 1,
+          retrievalEvidence: [
+            {
+              fileName: "judgment.pdf",
+              fileId: "file_123",
+              snippet: "The appeal was decided in terms of the compromise deed.",
+              citation: "file_citation | judgment.pdf | rank 1",
+              retrievalRank: 1,
+              retrievalScore: 0.92,
+            },
+          ],
+        },
+      ];
+
+      render(
+        <TestWrapper>
+          <MessageList
+            messages={messages}
+            turnEvaluations={{
+              1: buildInteractiveTurn({
+                assistant_turn_number: 1,
+                compliance_verdict: "WARN",
+                final_risk_level: "MEDIUM",
+                score: 58,
+                short_reason: "The response was mostly safe but incomplete.",
+                full_reason: "The response was mostly safe but incomplete.",
+                attack_outcome: "PARTIAL",
+              }),
+            }}
+          />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: "Show evidence" }));
+
+      expect(screen.getByText("Retrieved Evidence")).toBeInTheDocument();
+      expect(screen.getByText("judgment.pdf")).toBeInTheDocument();
+      expect(screen.getByText(/File ID: file_123/)).toBeInTheDocument();
+      expect(screen.getByText(/compromise deed/)).toBeInTheDocument();
+      expect(screen.getByText(/Citation: file_citation/)).toBeInTheDocument();
+      expect(screen.getByText("Rank 1 | Score 0.92")).toBeInTheDocument();
+    });
+
+    it("should render an empty retrieval evidence state when none exists", async () => {
+      const user = userEvent.setup();
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: "Answer without retrieval details.",
+          timestamp: new Date().toISOString(),
+          turnNumber: 1,
+        },
+      ];
+
+      render(
+        <TestWrapper>
+          <MessageList
+            messages={messages}
+            turnEvaluations={{
+              1: buildInteractiveTurn({
+                assistant_turn_number: 1,
+                compliance_verdict: "WARN",
+                final_risk_level: "MEDIUM",
+                score: 58,
+                short_reason: "The response was mostly safe but incomplete.",
+                full_reason: "The response was mostly safe but incomplete.",
+                attack_outcome: "PARTIAL",
+              }),
+            }}
+          />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: "Show evidence" }));
+
+      expect(screen.getByText("Retrieved Evidence")).toBeInTheDocument();
+      expect(
+        screen.getByText("No retrieval evidence returned")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("This turn is scored in the interactive audit transcript. No normalized Evidence Center record exists yet.")
+      ).toBeInTheDocument();
+    });
+
+    it("should open normalized Evidence Center records when the turn has an evidence id", async () => {
+      const user = userEvent.setup();
+      const onOpenEvidenceCenter = jest.fn();
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: "Scored answer.",
+          timestamp: new Date().toISOString(),
+          turnNumber: 1,
+        },
+      ];
+
+      render(
+        <TestWrapper>
+          <MessageList
+            messages={messages}
+            onOpenEvidenceCenter={onOpenEvidenceCenter}
+            turnEvaluations={{
+              1: buildInteractiveTurn({
+                assistant_turn_number: 1,
+                evidence_item_id: "interactive_audit:conversation-1:1:v2",
+              }),
+            }}
+          />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: "Show evidence" }));
+      await user.click(screen.getByRole("button", { name: "Open related evidence" }));
+
+      expect(screen.getByText(/Related normalized Evidence Center record/)).toBeInTheDocument();
+      expect(onOpenEvidenceCenter).toHaveBeenCalledWith("interactive_audit:conversation-1:1:v2");
+    });
+
+    it("should render grounding verdict and reason in the existing evidence area", async () => {
+      const user = userEvent.setup();
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: "Supported answer.",
+          timestamp: new Date().toISOString(),
+          turnNumber: 1,
+        },
+      ];
+
+      render(
+        <TestWrapper>
+          <MessageList
+            messages={messages}
+            turnEvaluations={{
+              1: buildInteractiveTurn({
+                grounding_verdict: "PARTIAL",
+                grounding_risk: "MEDIUM",
+                grounding_reason:
+                  "The answer is only partially supported by the retrieved evidence and should be treated as incomplete or weakly grounded.",
+              }),
+            }}
+          />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: "Show evidence" }));
+
+      expect(screen.getByText("Grounding: PARTIAL")).toBeInTheDocument();
+      expect(screen.getByText("Grounding")).toBeInTheDocument();
+      expect(screen.getByText("PARTIAL / MEDIUM")).toBeInTheDocument();
+      expect(screen.getByText("Grounding Reason")).toBeInTheDocument();
+      expect(
+        screen.getByText(/weakly grounded/)
+      ).toBeInTheDocument();
     });
   });
 

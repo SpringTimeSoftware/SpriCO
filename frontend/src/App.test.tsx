@@ -17,6 +17,9 @@ jest.mock("./services/api", () => ({
   versionApi: {
     getVersion: jest.fn().mockResolvedValue({ version: "1.0.0" }),
   },
+  targetsApi: {
+    getActiveTarget: jest.fn().mockRejectedValue(new Error("no active target")),
+  },
 }));
 
 const mockedVersionApi = jest.requireMock("./services/api").versionApi;
@@ -62,6 +65,9 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("history")} data-testid="nav-history">
           History
         </button>
+        <button onClick={() => onNavigate("landing")} data-testid="nav-landing">
+          Home
+        </button>
         {children}
       </div>
     );
@@ -70,6 +76,27 @@ jest.mock("./components/Layout/MainLayout", () => {
   return {
     __esModule: true,
     default: MockMainLayout,
+  };
+});
+
+jest.mock("./components/Landing/LandingPage", () => {
+  const MockLandingPage = ({
+    onNavigate,
+  }: {
+    onNavigate: (view: string) => void;
+  }) => {
+    return (
+      <div data-testid="landing-page">
+        <button onClick={() => onNavigate("chat")} data-testid="landing-start-chat">
+          Start Interactive Audit
+        </button>
+      </div>
+    );
+  };
+  MockLandingPage.displayName = "MockLandingPage";
+  return {
+    __esModule: true,
+    default: MockLandingPage,
   };
 });
 
@@ -180,7 +207,7 @@ describe("App", () => {
   it("renders with FluentProvider and MainLayout", () => {
     render(<App />);
     expect(screen.getByTestId("main-layout")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-window")).toBeInTheDocument();
+    expect(screen.getByTestId("landing-page")).toBeInTheDocument();
   });
 
   it("starts in dark mode", () => {
@@ -212,9 +239,20 @@ describe("App", () => {
     );
   });
 
-  it("starts in chat view", () => {
+  it("starts in landing view", () => {
     render(<App />);
 
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "landing"
+    );
+    expect(screen.getByTestId("landing-page")).toBeInTheDocument();
+  });
+
+  it("switches to chat view", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId("nav-chat"));
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "chat"
@@ -247,6 +285,7 @@ describe("App", () => {
   it("sets conversationId from chat window", () => {
     render(<App />);
 
+    fireEvent.click(screen.getByTestId("nav-chat"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
 
     fireEvent.click(screen.getByTestId("set-conversation"));
@@ -256,6 +295,7 @@ describe("App", () => {
   it("clears conversationId on new attack", () => {
     render(<App />);
 
+    fireEvent.click(screen.getByTestId("nav-chat"));
     fireEvent.click(screen.getByTestId("set-conversation"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
 
@@ -267,6 +307,7 @@ describe("App", () => {
     render(<App />);
 
     // No target initially
+    fireEvent.click(screen.getByTestId("nav-chat"));
     expect(screen.getByTestId("has-target")).toHaveTextContent("no");
 
     // Switch to config and set target
@@ -349,6 +390,7 @@ describe("App", () => {
   it("sets active conversation when onSelectConversation is called", () => {
     render(<App />);
 
+    fireEvent.click(screen.getByTestId("nav-chat"));
     // First create a conversation to have an attack
     fireEvent.click(screen.getByTestId("set-conversation"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");

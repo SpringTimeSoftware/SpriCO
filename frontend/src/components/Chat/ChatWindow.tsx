@@ -11,16 +11,24 @@ import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
-import { attacksApi } from '../../services/api'
+import { attacksApi, auditApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
-import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
+import type {
+  InteractiveAuditConversation,
+  Message,
+  MessageAttachment,
+  TargetInfo,
+  TargetInstance,
+} from '../../types'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
 interface ChatWindowProps {
   onNewAttack: () => void
+  onOpenStructuredRun?: (runId: string) => void
   activeTarget: TargetInstance | null
+  savedInteractiveRunId?: string | null
   attackResultId: string | null
   conversationId: string | null
   activeConversationId: string | null
@@ -29,19 +37,46 @@ interface ChatWindowProps {
   labels?: Record<string, string>
   onLabelsChange?: (labels: Record<string, string>) => void
   onNavigate?: (view: ViewName) => void
-  /** Labels from the loaded attack (for operator locking). Null for new attacks. */
   attackLabels?: Record<string, string> | null
-  /** Target info that the current attack was started with (for cross-target guard). */
   attackTarget?: TargetInfo | null
-  /** True while a historical attack is being loaded from the history view. */
   isLoadingAttack?: boolean
-  /** Number of related (non-main) conversations in the loaded attack. */
   relatedConversationCount?: number
+}
+
+type AuditBadgeColor = 'danger' | 'informative' | 'success' | 'warning'
+
+function verdictColor(verdict?: string | null): AuditBadgeColor {
+  switch ((verdict || '').toUpperCase()) {
+    case 'PASS':
+      return 'success'
+    case 'WARN':
+      return 'warning'
+    case 'FAIL':
+      return 'danger'
+    default:
+      return 'informative'
+  }
+}
+
+function riskColor(risk?: string | null): AuditBadgeColor {
+  switch ((risk || '').toUpperCase()) {
+    case 'LOW':
+      return 'success'
+    case 'MEDIUM':
+      return 'warning'
+    case 'HIGH':
+    case 'CRITICAL':
+      return 'danger'
+    default:
+      return 'informative'
+  }
 }
 
 export default function ChatWindow({
   onNewAttack,
+  onOpenStructuredRun,
   activeTarget,
+  savedInteractiveRunId,
   attackResultId,
   conversationId,
   activeConversationId,
@@ -57,91 +92,179 @@ export default function ChatWindow({
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
   const [messages, setMessages] = useState<Message[]>([])
-  // Track sending state per conversation so parallel conversations can send independently
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
-  /** True while an async message fetch is in-flight */
   const [isLoadingMessages, setIsLoadingMessages] = useState(false)
-  /** Which conversation's messages are currently loaded (set after fetch completes) */
   const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null)
-  const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
+  const [interactiveAudit, setInteractiveAudit] = useState<InteractiveAuditConversation | null>(null)
+  const [isSavingStructuredRun, setIsSavingStructuredRun] = useState(false)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
+  const activeTargetLabel = activeTarget
+    ? (activeTarget.display_name?.trim() || activeTarget.target_type)
+    : null
+  const activeTargetTooltip = activeTarget
+    ? [
+        activeTarget.display_name?.trim() || null,
+        activeTarget.target_type,
+        activeTarget.model_name ? `(${activeTarget.model_name})` : null,
+        activeTarget.target_registry_name,
+      ]
+        .filter(Boolean)
+        .join(' ')
+    : ''
 
-  // Auto-open conversation sidebar when loading a historical attack with multiple conversations
+  const isSending = activeConversationId
+    ? sendingConversations.has(activeConversationId)
+    : Boolean(sendingConversations.size)
+  const isSavedInteractiveReplay = Boolean(savedInteractiveRunId)
+
   useEffect(() => {
     if (relatedConversationCount && relatedConversationCount > 0) {
       setIsPanelOpen(true)
     }
   }, [attackResultId, relatedConversationCount])
-  // Always-current ref of the conversation being viewed so async callbacks can
-  // check whether the user navigated away while a request was in-flight.
+
   const viewedConvRef = useRef(activeConversationId ?? conversationId)
-  useEffect(() => { viewedConvRef.current = activeConversationId ?? conversationId }, [activeConversationId, conversationId])
-  // Synchronous ref tracking which conversations have an in-flight send.
+  useEffect(() => {
+    viewedConvRef.current = activeConversationId ?? conversationId
+  }, [activeConversationId, conversationId])
+
   const sendingConvIdsRef = useRef<Set<string>>(new Set())
-  // Pending user messages per conversation that may not be stored server-side yet.
-  // Used to restore the user's input when switching back to an in-flight conversation.
   const pendingUserMessagesRef = useRef<Map<string, Message[]>>(new Map())
 
-  // Clear internal messages when attack state is reset (e.g. New Attack)
   useEffect(() => {
-    if (!attackResultId) {
+    if (!attackResultId && !savedInteractiveRunId) {
       setMessages([])
       setLoadedConversationId(null)
+      setInteractiveAudit(null)
     }
-  }, [attackResultId])
+  }, [attackResultId, savedInteractiveRunId])
 
-  // Load messages for a given conversation
-  const loadConversation = useCallback(async (arId: string, convId: string) => {
+  const loadSavedInteractiveRun = useCallback(async (runId: string) => {
     setIsLoadingMessages(true)
     try {
-      const response = await attacksApi.getMessages(arId, convId)
-      // Discard stale response if user navigated away while loading
-      if (viewedConvRef.current !== convId) { return }
-      const frontendMessages = backendMessagesToFrontend(response.messages)
-      // If this conversation has an in-flight send, append any pending user
-      // messages (that the server may not have stored yet) and a loading indicator.
-      if (sendingConvIdsRef.current.has(convId)) {
-        const pending = pendingUserMessagesRef.current.get(convId) ?? []
-        frontendMessages.push(...pending)
-        frontendMessages.push({
+      const response = await auditApi.getInteractiveAuditRun(runId)
+      const replayMessages: Message[] = response.turns.flatMap(turn => {
+        const timestamp = new Date().toISOString()
+        const userPrompt = (turn.latest_user_prompt || turn.prompt_sequence || '').trim()
+        const messagesForTurn: Message[] = []
+        if (userPrompt) {
+          messagesForTurn.push({
+            role: 'user',
+            content: userPrompt,
+            timestamp,
+            turnNumber: turn.assistant_turn_number,
+          })
+        }
+        messagesForTurn.push({
           role: 'assistant',
-          content: '...',
-          timestamp: new Date().toISOString(),
-          isLoading: true,
+          content: turn.response_text,
+          timestamp,
+          turnNumber: turn.assistant_turn_number,
         })
-      }
-      setMessages(frontendMessages)
-      setLoadedConversationId(convId)
-    } catch {
-      if (viewedConvRef.current !== convId) { return }
-      setMessages([])
-      setLoadedConversationId(convId)
+        return messagesForTurn
+      })
+      setMessages(replayMessages)
+      setLoadedConversationId(response.conversation_id)
+      setInteractiveAudit(response)
+    } catch (err) {
+      const apiError = toApiError(err)
+      setMessages([{
+        role: 'assistant',
+        content: '',
+        timestamp: new Date().toISOString(),
+        error: {
+          type: apiError.isNetworkError ? 'network' : apiError.isTimeout ? 'timeout' : 'unknown',
+          description: apiError.detail,
+        },
+      }])
+      setLoadedConversationId(null)
+      setInteractiveAudit(null)
     } finally {
       setIsLoadingMessages(false)
     }
   }, [])
 
-  // Reload messages when activeConversationId changes
   useEffect(() => {
-    if (!attackResultId || !activeConversationId) { return }
-    // Skip loading if a send is already in-flight for this conversation —
-    // the send handler will update messages when it completes.
-    if (sendingConvIdsRef.current.has(activeConversationId)) { return }
+    if (!savedInteractiveRunId) {
+      return
+    }
+    viewedConvRef.current = savedInteractiveRunId
+    loadSavedInteractiveRun(savedInteractiveRunId)
+  }, [loadSavedInteractiveRun, savedInteractiveRunId])
+
+  const loadInteractiveAudit = useCallback(async (arId: string, convId: string) => {
+    try {
+      const response = await auditApi.getInteractiveAudit(arId, convId)
+      if (viewedConvRef.current !== convId) {
+        return
+      }
+      setInteractiveAudit(response)
+    } catch {
+      if (viewedConvRef.current !== convId) {
+        return
+      }
+      setInteractiveAudit(null)
+    }
+  }, [])
+
+  const loadConversation = useCallback(async (arId: string, convId: string) => {
+    setIsLoadingMessages(true)
+    try {
+      const [messageResponse, interactiveResponse] = await Promise.allSettled([
+        attacksApi.getMessages(arId, convId),
+        auditApi.getInteractiveAudit(arId, convId),
+      ])
+
+      if (viewedConvRef.current !== convId) {
+        return
+      }
+
+      if (messageResponse.status === 'fulfilled') {
+        const frontendMessages = backendMessagesToFrontend(messageResponse.value.messages)
+        if (sendingConvIdsRef.current.has(convId)) {
+          const pending = pendingUserMessagesRef.current.get(convId) ?? []
+          frontendMessages.push(...pending)
+          frontendMessages.push({
+            role: 'assistant',
+            content: '...',
+            timestamp: new Date().toISOString(),
+            isLoading: true,
+          })
+        }
+        setMessages(frontendMessages)
+      } else {
+        setMessages([])
+      }
+      setLoadedConversationId(convId)
+
+      if (interactiveResponse.status === 'fulfilled') {
+        setInteractiveAudit(interactiveResponse.value)
+      } else {
+        setInteractiveAudit(null)
+      }
+    } finally {
+      setIsLoadingMessages(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!attackResultId || !activeConversationId) {
+      return
+    }
+    if (sendingConvIdsRef.current.has(activeConversationId)) {
+      return
+    }
     loadConversation(attackResultId, activeConversationId)
   }, [activeConversationId, attackResultId, loadConversation])
 
-  // Synchronous loading derivation: if activeConversationId differs from the
-  // conversation whose messages we've loaded, we're in a transition gap.
-  // This avoids the 1-frame flash between useEffect fire and render.
   const awaitingConversationLoad = Boolean(
-    activeConversationId && activeConversationId !== loadedConversationId
-    && !sendingConvIdsRef.current.has(activeConversationId)
+    activeConversationId &&
+      activeConversationId !== loadedConversationId &&
+      !sendingConvIdsRef.current.has(activeConversationId)
   )
 
-  // Handle conversation selection from the panel
-  // For a different ID the useEffect handles loading; for same ID force a refresh
   const handlePanelSelectConversation = useCallback((convId: string) => {
     onSelectConversation(convId)
     if (convId === activeConversationId && attackResultId) {
@@ -149,15 +272,18 @@ export default function ChatWindow({
     }
   }, [attackResultId, activeConversationId, onSelectConversation, loadConversation])
 
-  const handleSend = async (originalValue: string, _convertedValue: string | undefined, attachments: MessageAttachment[]) => {
-    if (!activeTarget) { return }
+  const handleSend = async (
+    originalValue: string,
+    _convertedValue: string | undefined,
+    attachments: MessageAttachment[],
+  ) => {
+    if (!activeTarget) {
+      return
+    }
 
-    // Track which conversation this send belongs to (may be updated after attack creation)
     let sendConvId = activeConversationId || '__pending__'
-    // Mark synchronously so the useEffect guard sees it immediately
     sendingConvIdsRef.current.add(sendConvId)
 
-    // Add user message with attachments for display
     const userMessage: Message = {
       role: 'user',
       content: originalValue,
@@ -166,12 +292,10 @@ export default function ChatWindow({
     }
     setMessages(prev => [...prev, userMessage])
 
-    // Track as pending so switching back before the server stores it still shows it
     const pending = pendingUserMessagesRef.current.get(sendConvId) ?? []
     pending.push(userMessage)
     pendingUserMessagesRef.current.set(sendConvId, pending)
 
-    // Show loading indicator
     setSendingConversations(prev => new Set(prev).add(sendConvId))
     const loadingMessage: Message = {
       role: 'assistant',
@@ -182,13 +306,12 @@ export default function ChatWindow({
     setMessages(prev => [...prev, loadingMessage])
 
     try {
-      // Build message pieces from text + attachments
       const pieces = await buildMessagePieces(originalValue, attachments)
 
-      // Create attack lazily on first message
       let currentAttackResultId = attackResultId
       let currentConversationId = conversationId
       let currentActiveConversationId = activeConversationId
+
       if (!currentAttackResultId) {
         const createResponse = await attacksApi.createAttack({
           target_registry_name: activeTarget.target_registry_name,
@@ -197,34 +320,26 @@ export default function ChatWindow({
         currentAttackResultId = createResponse.attack_result_id
         currentConversationId = createResponse.conversation_id
         currentActiveConversationId = currentConversationId
-        // Mark new ID in synchronous ref *before* triggering the state
-        // update that changes activeConversationId (and fires the useEffect)
         sendingConvIdsRef.current.delete('__pending__')
-        sendingConvIdsRef.current.add(currentConversationId!)
-        // Move pending messages to the real conversation ID
+        sendingConvIdsRef.current.add(currentConversationId)
         const pendingMsgs = pendingUserMessagesRef.current.get('__pending__')
         if (pendingMsgs) {
           pendingUserMessagesRef.current.delete('__pending__')
-          pendingUserMessagesRef.current.set(currentConversationId!, pendingMsgs)
+          pendingUserMessagesRef.current.set(currentConversationId, pendingMsgs)
         }
         onConversationCreated(currentAttackResultId, currentConversationId)
-        // Update the viewed-conversation ref so the success/error guards
-        // below recognise this as the active conversation.
-        viewedConvRef.current = currentConversationId!
-        // Update sending tracker to use real ID instead of __pending__
+        viewedConvRef.current = currentConversationId
         setSendingConversations(prev => {
           const next = new Set(prev)
           next.delete('__pending__')
           next.add(currentConversationId!)
           return next
         })
-        sendConvId = currentConversationId!
+        sendConvId = currentConversationId
       }
 
-      // The effective conversation we're sending for
       const effectiveConvId = currentActiveConversationId ?? currentConversationId
 
-      // Send message to target
       const response = await attacksApi.addMessage(currentAttackResultId!, {
         role: 'user',
         pieces,
@@ -234,26 +349,20 @@ export default function ChatWindow({
         labels: labels ?? undefined,
       })
 
-      // Only update displayed messages if the user is still viewing this conversation.
-      // If they switched away the response is persisted server-side and will appear
-      // when they navigate back.
       if (viewedConvRef.current === effectiveConvId) {
-        // Replace the entire message list with authoritative server data.
-        // This correctly handles the case where the user switched away and
-        // back during the request — the full conversation is restored.
         const backendMessages = backendMessagesToFrontend(response.messages.messages)
         setMessages(backendMessages)
         setLoadedConversationId(effectiveConvId!)
+        await loadInteractiveAudit(currentAttackResultId!, effectiveConvId!)
       }
     } catch (err) {
-      // Only show error in UI if user is still on this conversation
       if (viewedConvRef.current === sendConvId || viewedConvRef.current === (activeConversationId ?? conversationId)) {
         const apiError = toApiError(err)
         let description: string
         if (apiError.isNetworkError) {
-          description = 'Network error — check that the backend is running and reachable.'
+          description = 'Network error - check that the backend is running and reachable.'
         } else if (apiError.isTimeout) {
-          description = 'Request timed out. The server may be busy — please try again.'
+          description = 'Request timed out. The server may be busy - please try again.'
         } else {
           description = apiError.detail
         }
@@ -274,7 +383,6 @@ export default function ChatWindow({
           return [...prev, errorMessage]
         })
 
-        // Preserve the failed message text in the input box for easy re-send
         if (originalValue && inputBoxRef.current) {
           inputBoxRef.current.setText(originalValue)
         }
@@ -292,61 +400,68 @@ export default function ChatWindow({
   }
 
   const handleNewConversation = useCallback(async () => {
-    if (!attackResultId) { return }
+    if (!attackResultId) {
+      return
+    }
 
     try {
       const response = await attacksApi.createConversation(attackResultId, {})
       onSelectConversation(response.conversation_id)
       setIsPanelOpen(true)
     } catch {
-      // Silently fail
+      // Intentionally ignore creation errors here to preserve current flow.
     }
   }, [attackResultId, onSelectConversation])
 
-  // -------------------------------------------------------------------
-  // Message action handlers (4 buttons on each assistant message)
-  // -------------------------------------------------------------------
-
-  /** 1. Copy the clicked message's content/attachments into the current conversation's input box */
   const handleCopyToInput = useCallback((messageIndex: number) => {
     const msg = messages[messageIndex]
-    if (!msg) { return }
-    if (msg.content) { inputBoxRef.current?.setText(msg.content) }
+    if (!msg) {
+      return
+    }
+    if (msg.content) {
+      inputBoxRef.current?.setText(msg.content)
+    }
     if (msg.attachments) {
-      msg.attachments.filter(a => a.type !== 'file').forEach(att => {
+      msg.attachments.filter(att => att.type !== 'file').forEach(att => {
         inputBoxRef.current?.addAttachment(att)
       })
     }
   }, [messages])
 
-  /** 2. Create a new conversation in the same attack and copy ONLY this message to its input box */
   const handleCopyToNewConversation = useCallback(async (messageIndex: number) => {
-    if (!attackResultId) { return }
+    if (!attackResultId) {
+      return
+    }
     const msg = messages[messageIndex]
-    if (!msg) { return }
+    if (!msg) {
+      return
+    }
 
     try {
       const response = await attacksApi.createConversation(attackResultId, {})
       onSelectConversation(response.conversation_id)
       setIsPanelOpen(true)
-      // Small delay so the panel/messages update first
       setTimeout(() => {
-        if (msg.content) inputBoxRef.current?.setText(msg.content)
+        if (msg.content) {
+          inputBoxRef.current?.setText(msg.content)
+        }
         if (msg.attachments) {
-          msg.attachments.filter(a => a.type !== 'file').forEach(att => {
+          msg.attachments.filter(att => att.type !== 'file').forEach(att => {
             inputBoxRef.current?.addAttachment(att)
           })
         }
       }, 100)
     } catch {
-      // If creating fails, fall back to current conversation
-      if (msg.content) inputBoxRef.current?.setText(msg.content)
+      if (msg.content) {
+        inputBoxRef.current?.setText(msg.content)
+      }
     }
   }, [attackResultId, messages, onSelectConversation])
 
-  /** 3. Branch into a new conversation within the same attack (clone up to clicked message) */
   const handleBranchConversation = useCallback(async (messageIndex: number) => {
-    if (!attackResultId || !activeConversationId) { return }
+    if (!attackResultId || !activeConversationId) {
+      return
+    }
 
     try {
       const response = await attacksApi.createConversation(attackResultId, {
@@ -355,18 +470,16 @@ export default function ChatWindow({
       })
       onSelectConversation(response.conversation_id)
       setIsPanelOpen(true)
-      // Load the cloned messages
-      const messagesResp = await attacksApi.getMessages(attackResultId, response.conversation_id)
-      const frontendMessages = backendMessagesToFrontend(messagesResp.messages)
-      setMessages(frontendMessages)
+      await loadConversation(attackResultId, response.conversation_id)
     } catch (err) {
       console.error('Failed to branch into new conversation:', err)
     }
-  }, [attackResultId, activeConversationId, onSelectConversation])
+  }, [attackResultId, activeConversationId, onSelectConversation, loadConversation])
 
-  /** 4. Branch into a brand-new attack (clone up to clicked message with new labels) */
   const handleBranchAttack = useCallback(async (messageIndex: number) => {
-    if (!activeTarget || !activeConversationId) { return }
+    if (!activeTarget || !activeConversationId) {
+      return
+    }
 
     try {
       const createResponse = await attacksApi.createAttack({
@@ -376,18 +489,16 @@ export default function ChatWindow({
         cutoff_index: messageIndex,
       })
       onConversationCreated(createResponse.attack_result_id, createResponse.conversation_id)
-      // Load the cloned messages into the UI
-      const messagesResp = await attacksApi.getMessages(createResponse.attack_result_id, createResponse.conversation_id)
-      const frontendMessages = backendMessagesToFrontend(messagesResp.messages)
-      setMessages(frontendMessages)
-      setLoadedConversationId(createResponse.conversation_id)
+      await loadConversation(createResponse.attack_result_id, createResponse.conversation_id)
     } catch (err) {
       console.error('Failed to branch into new attack:', err)
     }
-  }, [activeTarget, activeConversationId, labels, onConversationCreated])
+  }, [activeTarget, activeConversationId, labels, onConversationCreated, loadConversation])
 
   const handleChangeMainConversation = useCallback(async (convId: string) => {
-    if (!attackResultId) { return }
+    if (!attackResultId) {
+      return
+    }
 
     try {
       await attacksApi.changeMainConversation(attackResultId, convId)
@@ -396,40 +507,37 @@ export default function ChatWindow({
     }
   }, [attackResultId])
 
-  const singleTurnLimitReached = activeTarget?.supports_multi_turn === false && messages.some(m => m.role === 'user')
+  const singleTurnLimitReached =
+    activeTarget?.supports_multi_turn === false && messages.some(message => message.role === 'user')
 
-  // Operator locking: if the loaded attack's operator differs from the current
-  // user's operator label, the conversation should be read-only.
   const currentOperator = labels?.operator
   const attackOperator = attackLabels?.operator
   const isOperatorLocked = Boolean(
     attackResultId && attackLabels && attackOperator && currentOperator && attackOperator !== currentOperator
   )
 
-  // Cross-target guard: if viewing a historical attack whose target differs
-  // from the currently configured target, prevent sending new messages.
-  // The user can "Continue with your target" to branch into a new attack with their target.
   const isCrossTargetLocked = Boolean(
-    attackResultId && attackTarget && activeTarget && (
-      attackTarget.target_type !== activeTarget.target_type ||
-      (attackTarget.endpoint ?? '') !== (activeTarget.endpoint ?? '') ||
-      (attackTarget.model_name ?? '') !== (activeTarget.model_name ?? '')
-    )
+    attackResultId &&
+      attackTarget &&
+      activeTarget &&
+      (
+        attackTarget.target_type !== activeTarget.target_type ||
+        (attackTarget.endpoint ?? '') !== (activeTarget.endpoint ?? '') ||
+        (attackTarget.model_name ?? '') !== (activeTarget.model_name ?? '')
+      )
   )
 
-  // "Continue with your target" — clone the current conversation into a new attack
   const handleUseAsTemplate = useCallback(async () => {
-    if (!attackResultId || !activeTarget || !activeConversationId) { return }
+    if (!attackResultId || !activeTarget || !activeConversationId) {
+      return
+    }
 
-    // Find the last non-loading message index to use as cutoff
-    const lastIndex = messages.reduce(
-      (acc, m, i) => (m.isLoading ? acc : i),
-      -1
-    )
-    if (lastIndex < 0) { return }
+    const lastIndex = messages.reduce((acc, message, index) => (message.isLoading ? acc : index), -1)
+    if (lastIndex < 0) {
+      return
+    }
 
     try {
-      // Let the backend clone the conversation with new labels
       const createResponse = await attacksApi.createAttack({
         target_registry_name: activeTarget.target_registry_name,
         labels: labels,
@@ -437,28 +545,60 @@ export default function ChatWindow({
         cutoff_index: lastIndex,
       })
       onConversationCreated(createResponse.attack_result_id, createResponse.conversation_id)
-      // Load the cloned messages into the UI
-      const messagesResp = await attacksApi.getMessages(createResponse.attack_result_id, createResponse.conversation_id)
-      const frontendMessages = backendMessagesToFrontend(messagesResp.messages)
-      setMessages(frontendMessages)
-      setLoadedConversationId(createResponse.conversation_id)
+      await loadConversation(createResponse.attack_result_id, createResponse.conversation_id)
     } catch (err) {
       console.error('Failed to use as template:', err)
     }
-  }, [attackResultId, activeTarget, activeConversationId, messages, labels, onConversationCreated])
+  }, [attackResultId, activeTarget, activeConversationId, messages, labels, onConversationCreated, loadConversation])
+
+  const handleSaveStructuredRun = useCallback(async () => {
+    if (interactiveAudit?.structured_run_id) {
+      onOpenStructuredRun?.(interactiveAudit.structured_run_id)
+      return
+    }
+    if (!attackResultId) {
+      return
+    }
+    setIsSavingStructuredRun(true)
+    try {
+      const savedRun = await auditApi.saveInteractiveAudit(attackResultId, activeConversationId || conversationId || undefined)
+      onOpenStructuredRun?.(savedRun.job_id)
+    } catch (err) {
+      console.error('Failed to save Interactive Audit as structured run:', toApiError(err))
+    } finally {
+      setIsSavingStructuredRun(false)
+    }
+  }, [activeConversationId, attackResultId, conversationId, interactiveAudit?.structured_run_id, onOpenStructuredRun])
+
+  const turnEvaluations = interactiveAudit
+    ? Object.fromEntries(interactiveAudit.turns.map(turn => [turn.assistant_turn_number, turn]))
+    : undefined
 
   return (
     <div className={styles.root}>
       <div className={styles.chatArea}>
         <div className={styles.ribbon}>
           <div className={styles.conversationInfo}>
-            <Text>PyRIT Attack</Text>
-            {activeTarget ? (
+            <Text>Interactive Audit</Text>
+            {isSavedInteractiveReplay && (
+              <Badge appearance="outline" color="informative">
+                Saved audit replay
+              </Badge>
+            )}
+            {isSavedInteractiveReplay && interactiveAudit?.target_registry_name ? (
               <div className={styles.targetInfo}>
-                <Text size={200}>→</Text>
-                <Tooltip content={activeTarget.target_registry_name} relationship="label">
+                <Text size={200}>{'->'}</Text>
+                <Badge appearance="outline" size="medium">
+                  {interactiveAudit.target_registry_name}
+                  {interactiveAudit.model_name ? ` (${interactiveAudit.model_name})` : ''}
+                </Badge>
+              </div>
+            ) : activeTarget ? (
+              <div className={styles.targetInfo}>
+                <Text size={200}>{'->'}</Text>
+                <Tooltip content={activeTargetTooltip} relationship="label">
                   <Badge appearance="outline" size="medium">
-                    {activeTarget.target_type}
+                    {activeTargetLabel}
                     {activeTarget.model_name ? ` (${activeTarget.model_name})` : ''}
                   </Badge>
                 </Tooltip>
@@ -478,21 +618,80 @@ export default function ChatWindow({
                 appearance="subtle"
                 icon={<PanelRightRegular />}
                 onClick={() => setIsPanelOpen(!isPanelOpen)}
-                disabled={!attackResultId}
+                disabled={!attackResultId || isSavedInteractiveReplay}
                 data-testid="toggle-panel-btn"
               />
             </Tooltip>
             <Button
               appearance="primary"
               icon={<AddRegular />}
-              onClick={() => { setIsPanelOpen(false); onNewAttack() }}
-              disabled={!attackResultId}
+              onClick={() => {
+                setIsPanelOpen(false)
+                onNewAttack()
+              }}
+              disabled={!attackResultId && !isSavedInteractiveReplay}
               data-testid="new-attack-btn"
             >
-              New Attack
+              New Session
             </Button>
           </div>
         </div>
+
+        <div className={styles.interactiveSummaryBar}>
+          <div className={styles.interactiveSummaryMeta}>
+            <Text weight="semibold" className={styles.interactiveSummaryTitle}>
+              Shared evaluator
+            </Text>
+            <Text size={200} className={styles.interactiveSummarySubtext}>
+              The transcript is scored with the same backend evaluator and aggregation logic used by formal audit findings.
+            </Text>
+          </div>
+          <div className={styles.interactiveSummaryBadges}>
+            {interactiveAudit && interactiveAudit.turns.length > 0 ? (
+              <>
+                <Button
+                  appearance="secondary"
+                  size="small"
+                  onClick={handleSaveStructuredRun}
+                  disabled={isSavingStructuredRun || (!attackResultId && !interactiveAudit?.structured_run_id)}
+                >
+                  {isSavingStructuredRun ? 'Opening...' : 'Open Findings'}
+                </Button>
+                <Badge appearance="filled" color={verdictColor(interactiveAudit.session_summary.aggregate_verdict)}>
+                  Verdict: {interactiveAudit.session_summary.aggregate_verdict}
+                </Badge>
+                <Badge appearance="outline" color={riskColor(interactiveAudit.session_summary.aggregate_risk_level)}>
+                  Risk: {interactiveAudit.session_summary.aggregate_risk_level}
+                </Badge>
+                <Badge appearance="outline" color="informative">
+                  Turns: {interactiveAudit.session_summary.total_assistant_turns}
+                </Badge>
+                <Badge appearance="outline" color="success">
+                  PASS {interactiveAudit.session_summary.pass_count}
+                </Badge>
+                <Badge appearance="outline" color="warning">
+                  WARN {interactiveAudit.session_summary.warn_count}
+                </Badge>
+                <Badge appearance="outline" color="danger">
+                  FAIL {interactiveAudit.session_summary.fail_count}
+                </Badge>
+              </>
+            ) : (
+              <Text size={200} className={styles.interactiveSummarySubtext}>
+                Per-turn verdicts appear after the assistant responds.
+              </Text>
+            )}
+          </div>
+        </div>
+
+        {isSavedInteractiveReplay && (
+          <div className={styles.savedReplayBanner} data-testid="saved-interactive-replay-banner">
+            <Text size={200}>
+              Viewing a saved Interactive Audit run from audit.db. This replay is read-only because the PyRIT attack session is not present in active memory.
+            </Text>
+          </div>
+        )}
+
         <MessageList
           messages={messages}
           onCopyToInput={handleCopyToInput}
@@ -504,11 +703,20 @@ export default function ChatWindow({
           isOperatorLocked={isOperatorLocked}
           isCrossTarget={isCrossTargetLocked}
           noTargetSelected={!activeTarget}
+          turnEvaluations={turnEvaluations}
+          disableInlineScoring
+          onOpenEvidenceCenter={(evidenceId) => {
+            if (evidenceId && typeof window !== 'undefined') {
+              window.sessionStorage.setItem('spricoEvidenceFindingId', evidenceId)
+            }
+            onNavigate?.('evidence')
+          }}
         />
+
         <ChatInputArea
           ref={inputBoxRef}
           onSend={handleSend}
-          disabled={isSending || !activeTarget || singleTurnLimitReached || isOperatorLocked || isCrossTargetLocked}
+          disabled={isSavedInteractiveReplay || isSending || !activeTarget || singleTurnLimitReached || isOperatorLocked || isCrossTargetLocked}
           activeTarget={activeTarget}
           singleTurnLimitReached={singleTurnLimitReached}
           onNewConversation={attackResultId ? handleNewConversation : undefined}
@@ -520,6 +728,7 @@ export default function ChatWindow({
           onConfigureTarget={!activeTarget ? () => onNavigate?.('config') : undefined}
         />
       </div>
+
       {isPanelOpen && (
         <ConversationPanel
           attackResultId={attackResultId}

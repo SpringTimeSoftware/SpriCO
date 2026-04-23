@@ -5,6 +5,7 @@ import type {
   MessageAttachment,
   MessageError,
   MessagePieceRequest,
+  RetrievalEvidenceItem,
 } from '../types'
 
 /**
@@ -73,6 +74,213 @@ function isMediaDataType(dataType: string): boolean {
  */
 function isReasoningDataType(dataType: string): boolean {
   return dataType === 'reasoning'
+}
+
+function isToolCallDataType(dataType: string): boolean {
+  return dataType === 'tool_call'
+}
+
+type JsonRecord = Record<string, unknown>
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function toStringValue(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed ? trimmed : undefined
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  return undefined
+}
+
+function toNumberValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
+function firstString(record: JsonRecord, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = toStringValue(record[key])
+    if (value) {
+      return value
+    }
+  }
+  return undefined
+}
+
+function firstNumber(record: JsonRecord, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = toNumberValue(record[key])
+    if (value !== undefined) {
+      return value
+    }
+  }
+  return undefined
+}
+
+function collectTextValues(value: unknown, depth = 0): string[] {
+  if (depth > 3 || value == null) {
+    return []
+  }
+  const direct = toStringValue(value)
+  if (direct) {
+    return [direct]
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(item => collectTextValues(item, depth + 1))
+  }
+  if (!isRecord(value)) {
+    return []
+  }
+  const candidates = ['text', 'value', 'snippet', 'excerpt', 'quote', 'content', 'retrieved_text_excerpt']
+  const collected: string[] = []
+  for (const key of candidates) {
+    if (key in value) {
+      collected.push(...collectTextValues(value[key], depth + 1))
+    }
+  }
+  return collected
+}
+
+function extractSnippet(record: JsonRecord): string | undefined {
+  const snippetFields = [
+    'snippet',
+    'text',
+    'excerpt',
+    'retrieved_text_excerpt',
+    'quote',
+    'content',
+    'matched_content',
+  ]
+  for (const field of snippetFields) {
+    if (!(field in record)) {
+      continue
+    }
+    const values = collectTextValues(record[field]).filter(Boolean)
+    if (values.length > 0) {
+      return values.join('\n')
+    }
+  }
+  return undefined
+}
+
+function formatCitation(record: JsonRecord): string | undefined {
+  const parts: string[] = []
+  const type = firstString(record, ['type', 'annotation_type'])
+  const label = firstString(record, ['citation_label', 'label'])
+  const filename = firstString(record, ['filename', 'file_name', 'document_name'])
+  const fileId = firstString(record, ['file_id', 'document_id'])
+  const page = firstNumber(record, ['page', 'page_no', 'page_number'])
+  const index = firstNumber(record, ['index', 'rank', 'retrieval_rank'])
+
+  if (type) parts.push(type)
+  if (label) parts.push(label)
+  if (filename) parts.push(filename)
+  if (!filename && fileId) parts.push(fileId)
+  if (page !== undefined) parts.push(`page ${page}`)
+  if (index !== undefined) parts.push(`rank ${index}`)
+
+  const quote = firstString(record, ['quote'])
+  if (quote) {
+    parts.push(`"${quote}"`)
+  }
+
+  return parts.length > 0 ? parts.join(' | ') : undefined
+}
+
+function hasRenderableRetrievalEvidence(item: RetrievalEvidenceItem): boolean {
+  return Boolean(
+    item.fileId ||
+      item.fileName ||
+      item.snippet ||
+      item.citation ||
+      item.retrievalRank !== undefined ||
+      item.retrievalScore !== undefined,
+  )
+}
+
+function normalizeRetrievalItem(
+  entry: JsonRecord,
+  {
+    source,
+    toolType,
+    fallbackToolType,
+  }: {
+    source: string | undefined
+    toolType: string | undefined
+    fallbackToolType: string | undefined
+  },
+): RetrievalEvidenceItem | null {
+  const item: RetrievalEvidenceItem = {
+    source,
+    toolType: toolType || fallbackToolType,
+    fileId: firstString(entry, ['file_id', 'document_id', 'id']) ?? null,
+    fileName: firstString(entry, ['filename', 'file_name', 'document_name', 'title']) ?? null,
+    snippet: extractSnippet(entry) ?? null,
+    citation: formatCitation(entry) ?? null,
+    retrievalRank: firstNumber(entry, ['retrieval_rank', 'rank', 'index', 'position']) ?? null,
+    retrievalScore: firstNumber(entry, ['retrieval_score', 'score', 'similarity', 'relevance_score']) ?? null,
+    raw: entry,
+  }
+
+  return hasRenderableRetrievalEvidence(item) ? item : null
+}
+
+function extractRetrievalEvidenceFromMetadata(metadata?: Record<string, unknown> | null): RetrievalEvidenceItem[] {
+  if (!metadata || !isRecord(metadata.retrieval_evidence)) {
+    return []
+  }
+
+  const retrievalEvidence = metadata.retrieval_evidence
+  const source = toStringValue(retrievalEvidence.source)
+  const toolType = toStringValue(retrievalEvidence.tool_type)
+  const normalized: RetrievalEvidenceItem[] = []
+
+  const rawResults = retrievalEvidence.results
+  if (Array.isArray(rawResults)) {
+    for (const result of rawResults) {
+      if (!isRecord(result)) {
+        continue
+      }
+      const item = normalizeRetrievalItem(result, {
+        source,
+        toolType,
+        fallbackToolType: 'retrieval_result',
+      })
+      if (item) {
+        normalized.push(item)
+      }
+    }
+  }
+
+  const rawAnnotations = retrievalEvidence.response_annotations
+  if (Array.isArray(rawAnnotations)) {
+    for (const annotation of rawAnnotations) {
+      if (!isRecord(annotation)) {
+        continue
+      }
+      const item = normalizeRetrievalItem(annotation, {
+        source,
+        toolType,
+        fallbackToolType: 'response_annotation',
+      })
+      if (item) {
+        normalized.push(item)
+      }
+    }
+  }
+
+  return normalized
 }
 
 /**
@@ -167,6 +375,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
   const attachments: MessageAttachment[] = []
   const originalAttachments: MessageAttachment[] = []
   const reasoningSummaries: string[] = []
+  const retrievalEvidence: RetrievalEvidenceItem[] = []
   let error: MessageError | undefined
 
   for (const piece of msg.pieces) {
@@ -176,10 +385,19 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
       error = pieceError
     }
 
+    retrievalEvidence.push(...extractRetrievalEvidenceFromMetadata(piece.prompt_metadata))
+
     // Extract reasoning summaries from reasoning-type pieces
     if (isReasoningDataType(piece.converted_value_data_type)) {
       const summaries = extractReasoningSummaries(piece.converted_value)
       reasoningSummaries.push(...summaries)
+      continue
+    }
+
+    // Tool-call payloads (for example file_search_call results) should not render
+    // as the visible assistant response. Their evidence remains available via
+    // prompt_metadata and is shown in the existing "Retrieved Evidence" block.
+    if (isToolCallDataType(piece.converted_value_data_type) || isToolCallDataType(piece.original_value_data_type)) {
       continue
     }
 
@@ -224,7 +442,9 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     role: role as Message['role'],
     content: convertedContent,
     timestamp: msg.created_at,
+    turnNumber: msg.turn_number,
     attachments: attachments.length > 0 ? attachments : undefined,
+    retrievalEvidence: retrievalEvidence.length > 0 ? retrievalEvidence : undefined,
     error,
     reasoningSummaries: reasoningSummaries.length > 0 ? reasoningSummaries : undefined,
     originalContent: hasTextDiff ? originalContent : undefined,

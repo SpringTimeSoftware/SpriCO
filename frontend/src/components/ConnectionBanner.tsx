@@ -8,7 +8,7 @@ const intentMap: Record<ConnectionStatus, 'error' | 'warning' | 'success'> = {
 }
 
 const messageMap: Record<ConnectionStatus, string> = {
-  disconnected: 'Unable to reach the PyRIT backend. Check that the server is running. Retrying…',
+  disconnected: 'Unable to reach the audit backend. Check that the server is running. Retrying...',
   degraded: 'Connection to the backend is unstable.',
   connected: 'Reconnected to the backend.',
 }

@@ -17,8 +17,9 @@ from fastapi.staticfiles import StaticFiles
 
 import pyrit
 from pyrit.backend.middleware import RequestIdMiddleware, register_error_handlers
-from pyrit.backend.routes import attacks, converters, health, labels, media, targets, version
-from pyrit.memory import CentralMemory
+from pyrit.backend.routes import attacks, audit, conditions, converters, evidence, external_engines, garak, health, judge, labels, legal, media, policies, projects, pyrit_compatibility, red, scoring, shield, storage, targets, version
+from pyrit.backend.services.target_service import get_target_service
+from pyrit.memory import CentralMemory, SQLiteMemory
 
 # Check for development mode from environment variable
 DEV_MODE = os.getenv("PYRIT_DEV_MODE", "false").lower() == "true"
@@ -37,14 +38,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except ValueError:
         logger.warning(
             "CentralMemory is not initialized. "
-            "Start the server via 'pyrit_backend' CLI instead of running uvicorn directly."
+            "Falling back to SQLiteMemory for backend availability. "
+            "Prefer starting via 'pyrit_backend' CLI for full initialization."
         )
+        CentralMemory.set_memory_instance(SQLiteMemory())
+    get_target_service().initialize_persistent_targets()
     yield
 
 
 app = FastAPI(
-    title="PyRIT API",
-    description="Python Risk Identification Tool for LLMs - REST API",
+    title="SpriCo AI Audit Platform API",
+    description="Structured AI audit platform built on PyRIT and SQLite - REST API",
     version=pyrit.__version__,
     lifespan=lifespan,
 )
@@ -73,9 +77,23 @@ app.add_middleware(
 app.include_router(attacks.router, prefix="/api", tags=["attacks"])
 app.include_router(targets.router, prefix="/api", tags=["targets"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])
+app.include_router(conditions.router, prefix="/api", tags=["conditions"])
 app.include_router(labels.router, prefix="/api", tags=["labels"])
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(media.router, prefix="/api", tags=["media"])
+app.include_router(scoring.router, prefix="/api", tags=["scoring"])
+app.include_router(audit.router, prefix="/api", tags=["audit"])
+app.include_router(pyrit_compatibility.router, prefix="/api", tags=["pyrit"])
+app.include_router(garak.router, prefix="/api", tags=["garak"])
+app.include_router(judge.router, prefix="/api", tags=["judge"])
+app.include_router(external_engines.router, prefix="/api", tags=["external-engines"])
+app.include_router(legal.router, prefix="/api", tags=["legal"])
+app.include_router(projects.router, prefix="/api", tags=["projects"])
+app.include_router(policies.router, prefix="/api", tags=["policies"])
+app.include_router(shield.router, prefix="/api", tags=["shield"])
+app.include_router(red.router, prefix="/api", tags=["red"])
+app.include_router(evidence.router, prefix="/api", tags=["evidence"])
+app.include_router(storage.router, prefix="/api", tags=["storage"])
 app.include_router(version.router, tags=["version"])
 
 
@@ -85,15 +103,15 @@ def setup_frontend() -> None:
 
     if DEV_MODE:
         # Development mode: frontend served separately by Vite
-        print("🔧 Running in DEVELOPMENT mode - frontend should be running on port 3000")
+        print("[dev] Running in DEVELOPMENT mode - frontend should be running on port 3000")
     elif frontend_path.exists():
         # Production mode: serve bundled frontend
-        print(f"✅ Serving frontend from {frontend_path}")
+        print(f"[ok] Serving frontend from {frontend_path}")
         app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
     else:
         # Production mode but no frontend found - warn but don't exit
         # This allows API-only usage
-        print("⚠️ WARNING: Frontend not found!")
+        print("[warning] Frontend not found!")
         print(f"   Expected location: {frontend_path}")
         print("   The frontend must be built and included in the package.")
         print("   Run: python build_scripts/prepare_package.py")

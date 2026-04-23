@@ -1,0 +1,37 @@
+THIRD_PARTY_NOTICES TEMPLATE FOR SPRICO
+
+This product may include or optionally integrate third-party open-source
+components. Each component below retains its own license and attribution terms.
+
+1. garak
+   Upstream: https://github.com/NVIDIA/garak
+   License: Apache-2.0
+   Local use: Optional scanner evidence engine for LLM vulnerability scanning
+   Local license copy: /licenses/garak/LICENSE.txt
+   Modified by SpriCO: [yes/no]
+   Version: [fill at build time]
+
+2. DeepTeam
+   Upstream: https://github.com/confident-ai/deepteam
+   License: Apache-2.0
+   Local use: Optional vulnerability/attack evidence engine for LLM, agent, and
+   RAG testing
+   Local license copy: /licenses/deepteam/LICENSE.txt
+   Modified by SpriCO: [yes/no]
+   Version: [fill at build time]
+
+3. promptfoo
+   Upstream: https://github.com/promptfoo/promptfoo
+   License: MIT
+   Local use: Optional declarative evaluation/assertion compatibility and/or
+   import/export support
+   Local license copy: /licenses/promptfoo/LICENSE.txt
+   Modified by SpriCO: [yes/no]
+   Version: [fill at build time]
+
+Notes:
+- Lakera is not bundled as open-source software and should not appear here
+  unless a separate licensed connector is later implemented and legal review
+  approves the wording.
+- If any bundled dependency includes a NOTICE file, include its mandatory notices
+  here or in a tool-specific NOTICE file.

@@ -1,0 +1,1 @@
+Fill this file during build or release with the exact upstream version or commit used.

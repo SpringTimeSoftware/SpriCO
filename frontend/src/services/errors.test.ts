@@ -188,5 +188,48 @@ describe('toApiError', () => {
     expect(result.status).toBe(422)
     expect(result.detail).toBe('Field "name" is required.')
     expect(result.type).toBe('validation_error')
+    expect(result.details).toEqual([{ field: 'name', reason: 'required' }])
+  })
+
+  it('handles SpriCO structured validation errors with details and next steps', () => {
+    const err = makeAxiosError({
+      status: 400,
+      data: {
+        error: 'validation_failed',
+        message: 'Cannot start scanner run.',
+        details: [{ field: 'target_id', reason: 'Target is required.' }],
+        next_steps: ['Select a configured target.'],
+      },
+    })
+
+    const result = toApiError(err)
+
+    expect(result.status).toBe(400)
+    expect(result.detail).toBe('Cannot start scanner run.')
+    expect(result.code).toBe('validation_failed')
+    expect(result.details).toEqual([{ field: 'target_id', reason: 'Target is required.' }])
+    expect(result.nextSteps).toEqual(['Select a configured target.'])
+  })
+
+  it('normalizes FastAPI 422 detail arrays for unsupported scanner fields', () => {
+    const err = makeAxiosError({
+      status: 422,
+      data: {
+        detail: [
+          {
+            type: 'extra_forbidden',
+            loc: ['body', 'cross_domain_override'],
+            msg: 'Extra inputs are not permitted',
+          },
+        ],
+      },
+    })
+
+    const result = toApiError(err)
+
+    expect(result.status).toBe(422)
+    expect(result.detail).toBe('Cannot start scanner run. The scanner request included an unsupported field: cross_domain_override. Backend schema has now been updated; retry the scan.')
+    expect(result.code).toBe('validation_failed')
+    expect(result.details).toEqual([{ field: 'body.cross_domain_override', reason: 'Extra inputs are not permitted' }])
   })
 })

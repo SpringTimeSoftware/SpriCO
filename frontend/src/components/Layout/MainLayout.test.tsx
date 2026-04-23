@@ -35,9 +35,14 @@ jest.mock("../Sidebar/Navigation", () => {
     );
   };
   MockNavigation.displayName = "MockNavigation";
+  const MockGroupedNavigation = ({ currentView }: { currentView: string }) => (
+    <div data-testid="grouped-navigation" data-current-view={currentView}>Grouped Navigation</div>
+  );
+  MockGroupedNavigation.displayName = "MockGroupedNavigation";
   return {
     __esModule: true,
     default: MockNavigation,
+    GroupedNavigation: MockGroupedNavigation,
   };
 });
 

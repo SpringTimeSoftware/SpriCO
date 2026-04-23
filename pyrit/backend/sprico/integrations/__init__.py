@@ -1,0 +1,1 @@
+"""SpriCO external integration adapters."""

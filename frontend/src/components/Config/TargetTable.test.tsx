@@ -37,6 +37,8 @@ describe('TargetTable', () => {
     targets: sampleTargets,
     activeTarget: null as TargetInstance | null,
     onSetActiveTarget: jest.fn(),
+    onViewTarget: jest.fn(),
+    onArchiveTarget: jest.fn(),
   }
 
   beforeEach(() => {
@@ -84,6 +86,8 @@ describe('TargetTable', () => {
 
     const setActiveButtons = screen.getAllByText('Set Active')
     expect(setActiveButtons).toHaveLength(3)
+    expect(screen.getAllByText('View')).toHaveLength(3)
+    expect(screen.getAllByText('Archive')).toHaveLength(3)
   })
 
   it('should show "Active" badge for the active target', () => {
@@ -113,6 +117,36 @@ describe('TargetTable', () => {
 
     expect(onSetActiveTarget).toHaveBeenCalledTimes(1)
     expect(onSetActiveTarget).toHaveBeenCalledWith(sampleTargets[1])
+  })
+
+  it('should call onViewTarget when "View" is clicked', () => {
+    const onViewTarget = jest.fn()
+
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} onViewTarget={onViewTarget} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getAllByText('View')[0])
+
+    expect(onViewTarget).toHaveBeenCalledTimes(1)
+    expect(onViewTarget).toHaveBeenCalledWith(sampleTargets[0])
+  })
+
+  it('should call onArchiveTarget when "Archive" is clicked', () => {
+    const onArchiveTarget = jest.fn()
+
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} onArchiveTarget={onArchiveTarget} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getAllByText('Archive')[0])
+
+    expect(onArchiveTarget).toHaveBeenCalledTimes(1)
+    expect(onArchiveTarget).toHaveBeenCalledWith(sampleTargets[0])
   })
 
   it('should handle empty targets list gracefully', () => {

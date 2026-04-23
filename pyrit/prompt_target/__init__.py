@@ -16,6 +16,7 @@ from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.crucible_target import CrucibleTarget
 from pyrit.prompt_target.gandalf_target import GandalfLevel, GandalfTarget
+from pyrit.prompt_target.gemini.gemini_file_search_target import GeminiFileSearchTarget
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
 from pyrit.prompt_target.http_target.http_target_callback_functions import (
     get_http_target_json_response_callback_function,
@@ -32,6 +33,7 @@ from pyrit.prompt_target.openai.openai_realtime_target import RealtimeTarget
 from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 from pyrit.prompt_target.openai.openai_tts_target import OpenAITTSTarget
+from pyrit.prompt_target.openai.openai_vector_store_target import OpenAIVectorStoreTarget
 from pyrit.prompt_target.openai.openai_video_target import OpenAIVideoTarget
 from pyrit.prompt_target.playwright_copilot_target import CopilotType, PlaywrightCopilotTarget
 from pyrit.prompt_target.playwright_target import PlaywrightTarget
@@ -46,6 +48,7 @@ __all__ = [
     "CrucibleTarget",
     "GandalfLevel",
     "GandalfTarget",
+    "GeminiFileSearchTarget",
     "get_http_target_json_response_callback_function",
     "get_http_target_regex_matching_callback_function",
     "HTTPTarget",
@@ -60,6 +63,7 @@ __all__ = [
     "OpenAIResponseTarget",
     "OpenAIVideoTarget",
     "OpenAITTSTarget",
+    "OpenAIVectorStoreTarget",
     "OpenAITarget",
     "PlaywrightTarget",
     "PlaywrightCopilotTarget",

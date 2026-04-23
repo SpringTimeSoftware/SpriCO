@@ -6,15 +6,44 @@ import TargetConfig from './components/Config/TargetConfig'
 import AttackHistory from './components/History/AttackHistory'
 import { DEFAULT_HISTORY_FILTERS } from './components/History/historyFilters'
 import type { HistoryFilters } from './components/History/historyFilters'
+import type { ViewName } from './components/Sidebar/Navigation'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
-import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
-import type { ViewName } from './components/Sidebar/Navigation'
+import AuditPage from './components/Audit/AuditPage'
+import DashboardPage from './components/Audit/DashboardPage'
+import HeatmapDashboardPage from './components/Audit/HeatmapDashboardPage'
+import PromptVariantsPage from './components/Audit/PromptVariantsPage'
+import StabilityDashboardPage from './components/Audit/StabilityDashboardPage'
+import TargetHelpPage from './components/Audit/TargetHelpPage'
+import BenchmarkLibraryPage from './components/Audit/BenchmarkLibraryPage'
+import GarakScannerPage from './components/SpriCO/GarakScannerPage'
+import ScannerRunReportsPage from './components/SpriCO/ScannerRunReportsPage'
+import ShieldPage from './components/SpriCO/ShieldPage'
+import PolicyPage from './components/SpriCO/PolicyPage'
+import RedPage from './components/SpriCO/RedPage'
+import EvidencePage from './components/SpriCO/EvidencePage'
+import CustomConditionsPage from './components/SpriCO/CustomConditionsPage'
+import OpenSourceComponentsPage from './components/SpriCO/OpenSourceComponentsPage'
+import ExternalEngineMetadataPage from './components/SpriCO/ExternalEngineMetadataPage'
+import JudgeModelsPage from './components/SpriCO/JudgeModelsPage'
+import LandingPage from './components/Landing/LandingPage'
+import { versionApi, attacksApi, targetsApi } from './services/api'
 import type { TargetInstance, TargetInfo } from './types'
-import { attacksApi, versionApi } from './services/api'
 
 const AUTO_DISMISS_MS = 5_000
+const DEFAULT_GLOBAL_LABELS: Record<string, string> = {}
+const BRAND_NAME = 'SpriCO AI Audit Platform'
+const THEME_STORAGE_KEY = 'siddhi-audit-theme'
+
+export interface AuditFindingsFilters {
+  verdict?: 'ALL' | 'FAIL' | 'WARN' | 'PASS'
+  category?: string
+  severity?: string
+  search?: string
+}
+
+type AuditOriginView = 'chat' | 'dashboard' | 'heatmap-dashboard' | 'stability-dashboard' | 'benchmark-library' | 'audit' | null
 
 function ConnectionBannerContainer() {
   const { status, reconnectCount } = useConnectionHealth()
@@ -36,8 +65,17 @@ function ConnectionBannerContainer() {
 }
 
 function App() {
-  const [isDarkMode, setIsDarkMode] = useState(true)
-  const [currentView, setCurrentView] = useState<ViewName>('chat')
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    if (typeof window === 'undefined') {
+      return true
+    }
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
+    return stored ? stored === 'dark' : true
+  })
+  const [currentView, setCurrentView] = useState<ViewName>('landing')
+  const [selectedAuditRunId, setSelectedAuditRunId] = useState<string | null>(null)
+  const [selectedAuditFilters, setSelectedAuditFilters] = useState<AuditFindingsFilters | null>(null)
+  const [selectedAuditOrigin, setSelectedAuditOrigin] = useState<AuditOriginView>(null)
   const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
   const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
   /** True while loading a historical attack from the history view */
@@ -56,7 +94,26 @@ function App() {
       .catch(() => { /* version fetch handled elsewhere */ })
   }, [])
 
-  const handleSetActiveTarget = useCallback((target: TargetInstance) => {
+  useEffect(() => {
+    targetsApi.getActiveTarget()
+      .then((target) => {
+        setActiveTarget(target)
+      })
+      .catch(() => { /* no persisted active target */ })
+  }, [])
+
+  useEffect(() => {
+    const themeName = isDarkMode ? 'dark' : 'light'
+    document.title = BRAND_NAME
+    document.documentElement.setAttribute('data-theme', themeName)
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeName)
+  }, [isDarkMode])
+
+  const handleSetActiveTarget = useCallback((target: TargetInstance | null) => {
+    if (target === null) {
+      setActiveTarget(null)
+      return
+    }
     setActiveTarget(prev => {
       const isSame = prev &&
         prev.target_registry_name === target.target_registry_name &&
@@ -84,6 +141,8 @@ function App() {
   const [attackTarget, setAttackTarget] = useState<TargetInfo | null>(null)
   /** Number of related conversations for the currently loaded attack. */
   const [relatedConversationCount, setRelatedConversationCount] = useState(0)
+  /** Saved Interactive Audit run loaded from audit.db when PyRIT memory has no attack session. */
+  const [savedInteractiveRunId, setSavedInteractiveRunId] = useState<string | null>(null)
 
   const clearAttackState = useCallback(() => {
     setAttackResultId(null)
@@ -92,6 +151,7 @@ function App() {
     setAttackLabels(null)
     setAttackTarget(null)
     setRelatedConversationCount(0)
+    setSavedInteractiveRunId(null)
   }, [])
 
   const handleNewAttack = () => {
@@ -118,6 +178,7 @@ function App() {
   }, [])
 
   const handleOpenAttack = useCallback(async (openAttackResultId: string) => {
+    setSavedInteractiveRunId(null)
     setAttackResultId(openAttackResultId)
     setIsLoadingAttack(true)
     setCurrentView('chat')
@@ -136,9 +197,26 @@ function App() {
     }
   }, [clearAttackState])
 
+  const handleOpenSavedInteractiveAudit = useCallback((runId: string) => {
+    clearAttackState()
+    setSavedInteractiveRunId(runId)
+    setCurrentView('chat')
+  }, [clearAttackState])
+
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode)
   }
+
+  const handleNavigate = useCallback((view: ViewName) => {
+    setCurrentView(view)
+    if (view !== 'findings') {
+      setSelectedAuditOrigin(null)
+      return
+    }
+    if (!selectedAuditRunId) {
+      setSelectedAuditOrigin(null)
+    }
+  }, [selectedAuditRunId])
 
   return (
     <ErrorBoundary>
@@ -147,14 +225,25 @@ function App() {
           <ConnectionBannerContainer />
           <MainLayout
             currentView={currentView}
-            onNavigate={setCurrentView}
+            onNavigate={handleNavigate}
             onToggleTheme={toggleTheme}
             isDarkMode={isDarkMode}
+            brandingName={BRAND_NAME}
           >
+            {currentView === 'landing' && (
+              <LandingPage onNavigate={handleNavigate} />
+            )}
             {currentView === 'chat' && (
               <ChatWindow
                 onNewAttack={handleNewAttack}
+                onOpenStructuredRun={(runId) => {
+                  setSelectedAuditRunId(runId)
+                  setSelectedAuditFilters(null)
+                  setSelectedAuditOrigin('chat')
+                  setCurrentView('findings')
+                }}
                 activeTarget={activeTarget}
+                savedInteractiveRunId={savedInteractiveRunId}
                 attackResultId={attackResultId}
                 conversationId={conversationId}
                 activeConversationId={activeConversationId}
@@ -173,14 +262,141 @@ function App() {
               <TargetConfig
                 activeTarget={activeTarget}
                 onSetActiveTarget={handleSetActiveTarget}
+                onOpenTargetHelp={() => setCurrentView('target-help')}
               />
             )}
             {currentView === 'history' && (
               <AttackHistory
                 onOpenAttack={handleOpenAttack}
+                onOpenSavedInteractiveAudit={handleOpenSavedInteractiveAudit}
+                onOpenAuditRuns={() => setCurrentView('audit')}
+                onNavigate={setCurrentView}
                 filters={historyFilters}
                 onFiltersChange={setHistoryFilters}
               />
+            )}
+            {currentView === 'audit' && (
+              <AuditPage
+                initialRunId={selectedAuditRunId}
+                initialFilters={selectedAuditFilters}
+                onRunOpened={() => {
+                  setSelectedAuditRunId(null)
+                  setSelectedAuditFilters(null)
+                }}
+              />
+            )}
+            {currentView === 'findings' && (
+              <AuditPage
+                initialRunId={selectedAuditRunId}
+                initialFilters={selectedAuditFilters}
+                forcedWorkspaceView="findings"
+                backLink={selectedAuditOrigin ? {
+                  label: selectedAuditOrigin === 'chat'
+                    ? 'Back To Interactive Audit'
+                    : selectedAuditOrigin === 'dashboard'
+                    ? 'Back To Structured Dashboard'
+                    : selectedAuditOrigin === 'heatmap-dashboard'
+                      ? 'Back To Heatmap Dashboard'
+                      : selectedAuditOrigin === 'stability-dashboard'
+                        ? 'Back To Stability Dashboard'
+                        : selectedAuditOrigin === 'benchmark-library'
+                          ? 'Back To Benchmark Library'
+                          : 'Back To Audit Workstation',
+                  onClick: () => setCurrentView(selectedAuditOrigin),
+                } : undefined}
+                onRunOpened={() => {
+                  setSelectedAuditRunId(null)
+                  setSelectedAuditFilters(null)
+                }}
+              />
+            )}
+            {currentView === 'dashboard' && (
+              <DashboardPage
+                onOpenRun={(runId, filters) => {
+                  setSelectedAuditRunId(runId)
+                  setSelectedAuditFilters(filters ?? null)
+                  setSelectedAuditOrigin('dashboard')
+                  setCurrentView('findings')
+                }}
+              />
+            )}
+            {currentView === 'heatmap-dashboard' && (
+              <HeatmapDashboardPage
+                onOpenRun={(runId, filters) => {
+                  setSelectedAuditRunId(runId)
+                  setSelectedAuditFilters(filters ?? null)
+                  setSelectedAuditOrigin('heatmap-dashboard')
+                  setCurrentView('findings')
+                }}
+                onOpenPromptVariants={() => setCurrentView('prompt-variants')}
+                onOpenFindings={() => {
+                  setSelectedAuditOrigin('heatmap-dashboard')
+                  setCurrentView('findings')
+                }}
+              />
+            )}
+            {currentView === 'prompt-variants' && (
+              <PromptVariantsPage
+                onOpenRun={(runId) => {
+                  setSelectedAuditRunId(runId)
+                  setSelectedAuditFilters(null)
+                  setSelectedAuditOrigin('audit')
+                  setCurrentView('findings')
+                }}
+              />
+            )}
+            {currentView === 'stability-dashboard' && (
+              <StabilityDashboardPage
+                onOpenRun={(runId) => {
+                  setSelectedAuditRunId(runId)
+                  setSelectedAuditFilters(null)
+                  setSelectedAuditOrigin('stability-dashboard')
+                  setCurrentView('findings')
+                }}
+              />
+            )}
+            {currentView === 'benchmark-library' && (
+              <BenchmarkLibraryPage
+                onOpenRun={(runId) => {
+                  setSelectedAuditRunId(runId)
+                  setSelectedAuditFilters(null)
+                  setSelectedAuditOrigin('benchmark-library')
+                  setCurrentView('findings')
+                }}
+              />
+            )}
+            {currentView === 'target-help' && (
+              <TargetHelpPage />
+            )}
+            {currentView === 'garak-scanner' && (
+              <GarakScannerPage onNavigate={setCurrentView} />
+            )}
+            {currentView === 'scanner-reports' && (
+              <ScannerRunReportsPage onNavigate={setCurrentView} />
+            )}
+            {currentView === 'shield' && (
+              <ShieldPage />
+            )}
+            {currentView === 'policy' && (
+              <PolicyPage />
+            )}
+            {currentView === 'red' && (
+              <RedPage />
+            )}
+            {currentView === 'evidence' && (
+              <EvidencePage />
+            )}
+            {currentView === 'conditions' && (
+              <CustomConditionsPage />
+            )}
+            {currentView === 'open-source-components' && (
+              <OpenSourceComponentsPage />
+            )}
+            {currentView === 'external-engines' && (
+              <ExternalEngineMetadataPage />
+            )}
+            {currentView === 'judge-models' && (
+              <JudgeModelsPage />
             )}
           </MainLayout>
         </FluentProvider>

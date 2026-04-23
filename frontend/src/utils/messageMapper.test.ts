@@ -396,6 +396,125 @@ describe("messageMapper", () => {
       expect(result.attachments![0].url).toBe("/api/media?path=output%2Fimg.png");
       expect(result.attachments![0].mimeType).toBe("image/png");
     });
+
+    it("should preserve retrieval evidence from prompt metadata", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        pieces: [
+          {
+            piece_id: "p1",
+            original_value_data_type: "text",
+            converted_value_data_type: "text",
+            converted_value: "Answer with retrieval support.",
+            prompt_metadata: {
+              retrieval_evidence: {
+                source: "openai_responses_api",
+                response_annotations: [
+                  {
+                    type: "file_citation",
+                    filename: "judgment.pdf",
+                    quote: "Section 80 CPC",
+                  },
+                ],
+              },
+            },
+            scores: [],
+            response_error: "none",
+          },
+          {
+            piece_id: "p2",
+            original_value_data_type: "tool_call",
+            converted_value_data_type: "tool_call",
+            converted_value: "{\"type\":\"file_search_call\"}",
+            prompt_metadata: {
+              retrieval_evidence: {
+                source: "openai_responses_api",
+                tool_type: "file_search_call",
+                results: [
+                  {
+                    file_id: "file_123",
+                    filename: "judgment.pdf",
+                    text: "The appeal was decided in terms of the compromise deed.",
+                    index: 1,
+                    score: 0.92,
+                  },
+                ],
+              },
+            },
+            scores: [],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-04-14T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.content).toBe("Answer with retrieval support.");
+      expect(result.retrievalEvidence).toHaveLength(2);
+      expect(result.retrievalEvidence?.[0]).toMatchObject({
+        fileName: "judgment.pdf",
+        citation: expect.stringContaining("file_citation"),
+      });
+      expect(result.retrievalEvidence?.[1]).toMatchObject({
+        fileId: "file_123",
+        fileName: "judgment.pdf",
+        retrievalRank: 1,
+        retrievalScore: 0.92,
+      });
+      expect(result.retrievalEvidence?.[1]?.snippet).toContain("compromise deed");
+    });
+
+    it("should exclude tool_call payloads from visible chat content", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        pieces: [
+          {
+            piece_id: "tool-1",
+            original_value_data_type: "tool_call",
+            converted_value_data_type: "tool_call",
+            converted_value: "{\"type\":\"file_search_call\",\"results\":[{\"file_id\":\"file_123\"}]}",
+            prompt_metadata: {
+              retrieval_evidence: {
+                source: "openai_responses_api",
+                tool_type: "file_search_call",
+                results: [
+                  {
+                    file_id: "file_123",
+                    filename: "patient.md",
+                    text: "Allergies: penicillin",
+                    score: 0.91,
+                  },
+                ],
+              },
+            },
+            scores: [],
+            response_error: "none",
+          },
+          {
+            piece_id: "text-1",
+            original_value_data_type: "text",
+            converted_value_data_type: "text",
+            converted_value: "The uploaded record lists penicillin as an allergy.",
+            scores: [],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-04-14T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.content).toBe("The uploaded record lists penicillin as an allergy.");
+      expect(result.content).not.toContain("file_search_call");
+      expect(result.retrievalEvidence).toHaveLength(1);
+      expect(result.retrievalEvidence?.[0]).toMatchObject({
+        fileId: "file_123",
+        fileName: "patient.md",
+      });
+    });
   });
 
   describe("backendMessagesToFrontend", () => {

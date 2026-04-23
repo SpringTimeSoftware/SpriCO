@@ -5,7 +5,7 @@
 
 import { render, screen, fireEvent } from "@testing-library/react";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
-import Navigation from "./Navigation";
+import Navigation, { GroupedNavigation } from "./Navigation";
 
 const renderWithProvider = (ui: React.ReactElement) => {
   return render(<FluentProvider theme={webLightTheme}>{ui}</FluentProvider>);
@@ -23,12 +23,20 @@ describe("Navigation", () => {
     jest.clearAllMocks();
   });
 
-  it("renders the chat button", () => {
+  it("renders compact quick access without cryptic page abbreviations", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
 
-    const chatButton = screen.getByTitle("Chat");
+    const chatButton = screen.getByTitle("Interactive Audit");
     expect(chatButton).toBeInTheDocument();
     expect(chatButton).not.toBeDisabled();
+    expect(screen.queryByText("Gk")).not.toBeInTheDocument();
+    expect(screen.queryByText("Rd")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ev")).not.toBeInTheDocument();
+    expect(screen.queryByText("Hx")).not.toBeInTheDocument();
+    expect(screen.queryByText("St")).not.toBeInTheDocument();
+    expect(screen.queryByText("Bm")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fi")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pv")).not.toBeInTheDocument();
   });
 
   it("renders the configuration button", () => {
@@ -44,7 +52,7 @@ describe("Navigation", () => {
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    fireEvent.click(screen.getByTitle("Chat"));
+    fireEvent.click(screen.getByTitle("Interactive Audit"));
     expect(onNavigate).toHaveBeenCalledWith("chat");
   });
 
@@ -58,21 +66,77 @@ describe("Navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("config");
   });
 
-  it("renders the attack history button", () => {
-    renderWithProvider(<Navigation {...defaultProps} />);
-
-    const historyButton = screen.getByTitle("Attack History");
-    expect(historyButton).toBeInTheDocument();
-  });
-
-  it("calls onNavigate with 'history' when history button is clicked", () => {
+  it("renders grouped navigation and keeps all existing views reachable", () => {
     const onNavigate = jest.fn();
     renderWithProvider(
-      <Navigation {...defaultProps} onNavigate={onNavigate} />
+      <GroupedNavigation currentView="chat" onNavigate={onNavigate} />
     );
 
-    fireEvent.click(screen.getByTitle("Attack History"));
+    expect(screen.getByRole("button", { name: "Home" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Audit Workbench" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Scanners" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Policies" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Polcies" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dashboards" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Library" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Audit Workbench" }));
+    fireEvent.click(screen.getByText("Attack History"));
     expect(onNavigate).toHaveBeenCalledWith("history");
+  });
+
+  it("exposes the landing page from the Home group", () => {
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <GroupedNavigation currentView="landing" onNavigate={onNavigate} />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    expect(onNavigate).toHaveBeenCalledWith("landing");
+    expect(screen.queryByText("SpriCO Overview")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/\bHx\b/);
+    expect(document.body).not.toHaveTextContent(/\bSt\b/);
+    expect(document.body).not.toHaveTextContent(/\bBm\b/);
+    expect(document.body).not.toHaveTextContent(/\bFi\b/);
+    expect(document.body).not.toHaveTextContent(/\bPv\b/);
+  });
+
+  it("places new pages in the required groups", () => {
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <GroupedNavigation currentView="chat" onNavigate={onNavigate} />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Scanners" }));
+    expect(screen.getByText("LLM Vulnerability Scanner")).toBeInTheDocument();
+    expect(screen.getByText("Scanner Run Reports")).toBeInTheDocument();
+    expect(screen.getByText("Red Team Campaigns")).toBeInTheDocument();
+    expect(screen.getByText("garak Engine Diagnostics")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Scanner Run Reports"));
+    expect(onNavigate).toHaveBeenCalledWith("scanner-reports");
+    fireEvent.click(screen.getByRole("button", { name: "Scanners" }));
+    fireEvent.click(screen.getByText("LLM Vulnerability Scanner"));
+    expect(onNavigate).toHaveBeenCalledWith("garak-scanner");
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByText("Open Source Components")).toBeInTheDocument();
+    expect(screen.getByText("External Engine Metadata")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("External Engine Metadata"));
+    expect(onNavigate).toHaveBeenCalledWith("external-engines");
+  });
+
+  it("groups dashboards under the Dashboards menu", () => {
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <GroupedNavigation currentView="dashboard" onNavigate={onNavigate} />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Dashboards" }));
+    fireEvent.click(screen.getByText("Heatmap Dashboard"));
+    expect(onNavigate).toHaveBeenCalledWith("heatmap-dashboard");
+    const forbidden = ["Choose final", " scoring engine"].join("");
+    expect(document.body).not.toHaveTextContent(forbidden);
   });
 
   it("renders theme toggle button with light mode title when in dark mode", () => {

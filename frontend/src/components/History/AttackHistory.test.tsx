@@ -2,7 +2,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import AttackHistory from './AttackHistory'
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
-import { attacksApi, labelsApi } from '../../services/api'
+import { attacksApi, auditApi, labelsApi } from '../../services/api'
 
 jest.mock('../../services/api', () => ({
   attacksApi: {
@@ -10,12 +10,16 @@ jest.mock('../../services/api', () => ({
     getAttackOptions: jest.fn(),
     getConverterOptions: jest.fn(),
   },
+  auditApi: {
+    listInteractiveRuns: jest.fn(),
+  },
   labelsApi: {
     getLabels: jest.fn(),
   },
 }))
 
 const mockedAttacksApi = attacksApi as jest.Mocked<typeof attacksApi>
+const mockedAuditApi = auditApi as jest.Mocked<typeof auditApi>
 const mockedLabelsApi = labelsApi as jest.Mocked<typeof labelsApi>
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -66,6 +70,7 @@ describe('AttackHistory', () => {
     jest.clearAllMocks()
     mockedAttacksApi.getAttackOptions.mockImplementation(() => new Promise(() => {}))
     mockedAttacksApi.getConverterOptions.mockImplementation(() => new Promise(() => {}))
+    mockedAuditApi.listInteractiveRuns.mockResolvedValue([])
     mockedLabelsApi.getLabels.mockImplementation(() => new Promise(() => {}))
   })
 
@@ -110,7 +115,65 @@ describe('AttackHistory', () => {
     await waitFor(() => {
       expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     })
-    expect(screen.getByText('No attacks found')).toBeInTheDocument()
+    expect(screen.getByText('No PyRIT attack sessions were found in the active backend storage.')).toBeInTheDocument()
+    expect(screen.getByText(/Other SpriCO activity may exist under Audit Runs, Scanner Run Reports, Red Team Campaigns, Shield, Evidence Center, or Findings/)).toBeInTheDocument()
+    expect(screen.getByText(/Attack History reads PyRIT-backed manual attack sessions/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Audit Runs/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Open Scanner Run Reports/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Red Team Campaigns/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Evidence Center/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Findings/ })).toBeInTheDocument()
+  })
+
+  it('should show saved Interactive Audit runs from audit database and open them in Interactive Audit', async () => {
+    const onOpenSavedInteractiveAudit = jest.fn()
+    mockedAttacksApi.listAttacks.mockResolvedValue({
+      items: [],
+      pagination: { limit: 25, has_more: false },
+    })
+    mockedAuditApi.listInteractiveRuns.mockResolvedValue([
+      {
+        id: 'run-interactive-1',
+        job_id: 'run-interactive-1',
+        target_id: 'interactive::OpenAIChatTarget::gpt-4.1',
+        target_registry_name: 'interactive::OpenAIChatTarget::gpt-4.1',
+        target_type: 'OpenAIChatTarget',
+        model_name: 'gpt-4.1',
+        endpoint: 'https://api.openai.com/v1',
+        supports_multi_turn: true,
+        status: 'completed',
+        selected_industries: [],
+        selected_categories: ['Interactive Audit'],
+        selected_test_ids: [],
+        selected_variant_ids: [],
+        total_tests: 1,
+        completed_tests: 1,
+        pass_count: 1,
+        warn_count: 0,
+        fail_count: 0,
+        progress_percent: 100,
+        error_count: 0,
+        created_at: '2026-04-21T07:48:26.622898+00:00',
+        started_at: '2026-04-21T07:48:26.622898+00:00',
+        completed_at: '2026-04-21T07:49:26.622898+00:00',
+        updated_at: '2026-04-21T07:49:26.622898+00:00',
+        error_message: null,
+        results: [],
+      },
+    ])
+
+    render(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} onOpenSavedInteractiveAudit={onOpenSavedInteractiveAudit} />
+      </TestWrapper>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('saved-interactive-runs')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('saved-interactive-run-run-interactive-1'))
+    expect(onOpenSavedInteractiveAudit).toHaveBeenCalledWith('run-interactive-1')
+    expect(screen.getByText(/loaded from audit.db/)).toBeInTheDocument()
   })
 
   it('should render attack table rows', async () => {
@@ -611,7 +674,38 @@ describe('AttackHistory', () => {
       expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     })
     // Default empty text (no filters active)
-    expect(screen.getByText('Run an attack to see it here.')).toBeInTheDocument()
+    expect(screen.getByText(/Other SpriCO activity may exist under Audit Runs, Scanner Run Reports, Red Team Campaigns, Shield, Evidence Center, or Findings/)).toBeInTheDocument()
+  })
+
+  it('navigates to related activity history pages from link cards', async () => {
+    mockedAttacksApi.listAttacks.mockResolvedValue({
+      items: [],
+      pagination: { limit: 25, has_more: false },
+    })
+    const onNavigate = jest.fn()
+    const onOpenAuditRuns = jest.fn()
+
+    render(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} onOpenAuditRuns={onOpenAuditRuns} onNavigate={onNavigate} />
+      </TestWrapper>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('empty-state')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Audit Runs/ }))
+    expect(onOpenAuditRuns).toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /Open Scanner Run Reports/ }))
+    expect(onNavigate).toHaveBeenCalledWith('scanner-reports')
+
+    fireEvent.click(screen.getByRole('button', { name: /Evidence Center/ }))
+    expect(onNavigate).toHaveBeenCalledWith('evidence')
+
+    fireEvent.click(screen.getByRole('button', { name: /Findings/ }))
+    expect(onNavigate).toHaveBeenCalledWith('findings')
   })
 
   it('should show reset filters button when a filter is active', async () => {

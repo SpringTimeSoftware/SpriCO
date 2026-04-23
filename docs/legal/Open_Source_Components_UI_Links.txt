@@ -1,0 +1,36 @@
+OPEN SOURCE COMPONENTS UI CONTENT TEMPLATE
+
+Page path:
+Settings -> Legal -> Open Source Components
+
+Current checkout note:
+Canonical bundled license storage in this repository is third_party/<tool>/,
+not third_party/licenses/<tool>/. Do not duplicate or move license files unless
+all legal and UI references are updated together.
+
+Required rows:
+
+1. garak
+   License: Apache-2.0
+   Upstream URL: https://github.com/NVIDIA/garak
+   View bundled license: /api/legal/open-source-components/garak/license
+   Local file: third_party/garak/LICENSE.txt
+   Purpose in SpriCO: Optional scanner evidence engine
+
+2. DeepTeam
+   License: Apache-2.0
+   Upstream URL: https://github.com/confident-ai/deepteam
+   View bundled license: /api/legal/open-source-components/deepteam/license
+   Local file: third_party/deepteam/LICENSE.txt
+   Purpose in SpriCO: Optional vulnerability/attack evidence engine
+
+3. promptfoo
+   License: MIT
+   Upstream URL: https://github.com/promptfoo/promptfoo
+   View bundled license: /api/legal/open-source-components/promptfoo/license
+   Local file: third_party/promptfoo/LICENSE.txt
+   Purpose in SpriCO: Optional declarative audit/assertion compatibility
+
+Footer copy:
+“External engines can provide attacks, scanner results, or assertions.
+SpriCO’s PolicyDecisionEngine always computes the final audit verdict.”

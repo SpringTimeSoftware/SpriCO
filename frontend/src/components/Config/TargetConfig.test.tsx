@@ -9,6 +9,10 @@ jest.mock("../../services/api", () => ({
   targetsApi: {
     listTargets: jest.fn(),
     createTarget: jest.fn(),
+    activateTarget: jest.fn(),
+    getTargetConfig: jest.fn(),
+    updateTargetConfig: jest.fn(),
+    archiveTarget: jest.fn(),
   },
 }));
 
@@ -35,6 +39,30 @@ jest.mock("./CreateTargetDialog", () => {
     );
   };
   MockDialog.displayName = "MockCreateTargetDialog";
+  return {
+    __esModule: true,
+    default: MockDialog,
+  };
+});
+
+jest.mock("./ViewTargetDialog", () => {
+  const MockDialog = ({
+    open,
+    onClose,
+  }: {
+    open: boolean;
+    onClose: () => void;
+  }) => {
+    if (!open) return null;
+    return (
+      <div data-testid="view-dialog">
+        <button onClick={onClose} data-testid="view-dialog-close">
+          Close
+        </button>
+      </div>
+    );
+  };
+  MockDialog.displayName = "MockViewTargetDialog";
   return {
     __esModule: true,
     default: MockDialog,
@@ -70,6 +98,12 @@ describe("TargetConfig", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedTargetsApi.activateTarget.mockImplementation(async (targetRegistryName: string) => ({
+      target_registry_name: targetRegistryName,
+      target_type: "OpenAIChatTarget",
+      endpoint: "https://api.openai.com",
+      model_name: "gpt-4",
+    }));
   });
 
   it("should show loading state initially", () => {
@@ -165,7 +199,50 @@ describe("TargetConfig", () => {
     const setActiveButtons = screen.getAllByText("Set Active");
     await userEvent.click(setActiveButtons[0]);
 
-    expect(onSetActiveTarget).toHaveBeenCalledWith(sampleTargets[0]);
+    await waitFor(() => {
+      expect(onSetActiveTarget).toHaveBeenCalledWith(
+        expect.objectContaining({ target_registry_name: sampleTargets[0].target_registry_name })
+      );
+    });
+  });
+
+  it("should open target config view dialog", async () => {
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: sampleTargets,
+      pagination: { limit: 200, has_more: false },
+    });
+    mockedTargetsApi.getTargetConfig.mockResolvedValue({
+      target_registry_name: sampleTargets[0].target_registry_name,
+      display_name: "Safe Hospital",
+      target_type: sampleTargets[0].target_type,
+      endpoint: sampleTargets[0].endpoint,
+      model_name: sampleTargets[0].model_name,
+      retrieval_store_id: "vs_safe",
+      retrieval_mode: "file_search",
+      masked_api_key: "********abcd",
+      special_instructions: "Refuse raw PHI disclosure.",
+      provider_settings: {},
+      runtime_summary: { special_instructions_present: true },
+      created_at: null,
+      updated_at: null,
+    });
+
+    render(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getAllByText("View")[0]);
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.getTargetConfig).toHaveBeenCalledWith(sampleTargets[0].target_registry_name);
+      expect(screen.getByTestId("view-dialog")).toBeInTheDocument();
+    });
   });
 
   it("should show Active badge for active target", async () => {

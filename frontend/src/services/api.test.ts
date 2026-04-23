@@ -3,6 +3,7 @@ jest.mock("axios", () => ({
   create: jest.fn(() => ({
     get: jest.fn(),
     post: jest.fn(),
+    patch: jest.fn(),
     put: jest.fn(),
     delete: jest.fn(),
     interceptors: {
@@ -18,6 +19,7 @@ import {
   versionApi,
   targetsApi,
   attacksApi,
+  garakApi,
 } from "./api";
 
 describe("api service", () => {
@@ -147,6 +149,44 @@ describe("api service", () => {
     });
   });
 
+  describe("garakApi", () => {
+    it("falls back to legacy garak scan list when reports endpoint is unavailable", async () => {
+      const missingReportsError = {
+        isAxiosError: true,
+        response: { status: 404, data: { detail: "garak scan 'reports' not found" } },
+      };
+      (apiClient.get as jest.Mock)
+        .mockRejectedValueOnce(missingReportsError)
+        .mockResolvedValueOnce({
+          data: [
+            {
+              scan_id: "scan-1",
+              status: "completed_no_findings",
+              target_name: "Target A",
+              scan_profile: "quick_baseline",
+              evidence_count: 0,
+              findings_count: 0,
+              artifacts: [{ artifact_type: "command_metadata" }],
+              garak: {},
+              raw_findings: [],
+              signals: [],
+              findings: [],
+              aggregate: {},
+            },
+          ],
+        });
+
+      const result = await garakApi.listReports();
+
+      expect(apiClient.get).toHaveBeenNthCalledWith(1, "/scans/garak/reports");
+      expect(apiClient.get).toHaveBeenNthCalledWith(2, "/scans/garak");
+      expect(result.reports).toHaveLength(1);
+      expect(result.summary.scanner_runs_total).toBe(1);
+      expect(result.summary.scanner_runs_with_no_findings).toBe(1);
+      expect(result.summary.artifacts_stored).toBe(1);
+    });
+  });
+
   describe("targetsApi", () => {
     it("should list targets with default params", async () => {
       const mockResponse = {
@@ -197,6 +237,30 @@ describe("api service", () => {
 
       expect(apiClient.get).toHaveBeenCalledWith("/targets/my-target");
       expect(result.target_type).toBe("OpenAIImageTarget");
+    });
+
+    it("should get target configuration view", async () => {
+      const mockResponse = {
+        data: {
+          target_registry_name: "my-target",
+          display_name: "Safe Hospital",
+          target_type: "OpenAIVectorStoreTarget",
+          endpoint: "https://api.openai.com/v1",
+          model_name: "gpt-4.1",
+          retrieval_store_id: "vs_hospital",
+          retrieval_mode: "file_search",
+          masked_api_key: "********abcd",
+          special_instructions: "Refuse raw PHI requests.",
+          provider_settings: {},
+          runtime_summary: { special_instructions_present: true },
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await targetsApi.getTargetConfig("my-target");
+
+      expect(apiClient.get).toHaveBeenCalledWith("/targets/my-target/config");
+      expect(result.masked_api_key).toBe("********abcd");
     });
 
     it("should create a target", async () => {

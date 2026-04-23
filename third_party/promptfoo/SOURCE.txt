@@ -1,0 +1,6 @@
+Tool: promptfoo
+Upstream URL: https://github.com/promptfoo/promptfoo
+License: MIT
+Purpose in SpriCO: Optional declarative audit/assertion compatibility and CI-style regression support.
+Bundling mode: Optional dependency / adapter (recommended)
+Modified by SpriCO: [fill in build/release process]

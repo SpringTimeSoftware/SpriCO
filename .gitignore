@@ -4,6 +4,7 @@ results/
 dbdata/
 eval/
 default_memory.json.memory
+.codex_run/
 
 # Frontend build artifacts copied to backend for packaging
 pyrit/backend/frontend/

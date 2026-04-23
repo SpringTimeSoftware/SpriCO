@@ -183,7 +183,7 @@ describe("CreateTargetDialog", () => {
     fireEvent.change(endpointInput, { target: { value: "https://api.openai.com" } });
 
     // Fill API key — use fireEvent.change for the same reason as endpoint input.
-    fireEvent.change(screen.getByPlaceholderText("API key (stored in memory only)"), {
+    fireEvent.change(screen.getByPlaceholderText("API key (encrypted for local persistence)"), {
       target: { value: "sk-test-key-123" },
     });
 
@@ -257,6 +257,160 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Failed to create target")).toBeInTheDocument();
+    });
+  });
+
+  it("should create an OpenAIVectorStoreTarget with retrieval settings", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "openai_vector_store_new",
+      target_type: "OpenAIVectorStoreTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIVectorStoreTarget");
+
+    fireEvent.change(
+      screen.getByPlaceholderText("https://your-resource.openai.azure.com/"),
+      { target: { value: "https://api.openai.com/v1" } }
+    );
+    fireEvent.change(screen.getByPlaceholderText("e.g. gpt-4o, dall-e-3"), {
+      target: { value: "gpt-4.1" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("API key (encrypted for local persistence)"), {
+      target: { value: "sk-project-key-123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("vs_..."), {
+      target: { value: "vs_legal_demo" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("Optional retrieval-aware instructions for this target"),
+      { target: { value: "Answer only from retrieved judgments." } }
+    );
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIVectorStoreTarget",
+        display_name: undefined,
+        params: {
+          endpoint: "https://api.openai.com/v1",
+          model_name: "gpt-4.1",
+          api_key: "sk-project-key-123",
+          retrieval_store_id: "vs_legal_demo",
+          retrieval_mode: "file_search",
+          system_instructions: "Answer only from retrieved judgments.",
+        },
+      });
+    });
+  });
+
+  it("should require retrieval store ID for OpenAIVectorStoreTarget", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "OpenAIVectorStoreTarget");
+    fireEvent.change(
+      screen.getByPlaceholderText("https://your-resource.openai.azure.com/"),
+      { target: { value: "https://api.openai.com/v1" } }
+    );
+    await user.type(screen.getByPlaceholderText("e.g. gpt-4o, dall-e-3"), "gpt-4.1");
+    fireEvent.change(screen.getByPlaceholderText("API key (encrypted for local persistence)"), {
+      target: { value: "sk-project-key-123" },
+    });
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Please provide a retrieval store ID")).toBeInTheDocument();
+    });
+  });
+
+  it("should create a GeminiFileSearchTarget with retrieval settings", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue({
+      target_registry_name: "gemini_file_search_new",
+      target_type: "GeminiFileSearchTarget",
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "GeminiFileSearchTarget");
+
+    fireEvent.change(
+      screen.getByPlaceholderText("https://generativelanguage.googleapis.com/v1beta/"),
+      { target: { value: "https://generativelanguage.googleapis.com/v1beta/" } }
+    );
+    fireEvent.change(screen.getByPlaceholderText("e.g. gpt-4o, dall-e-3"), {
+      target: { value: "gemini-2.5-flash" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("API key (encrypted for local persistence)"), {
+      target: { value: "AIza-test-key-123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("fileSearchStores/..."), {
+      target: { value: "fileSearchStores/hr-demo" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("Optional retrieval-aware instructions for this target"),
+      { target: { value: "Answer only from the retrieved HR files." } }
+    );
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "GeminiFileSearchTarget",
+        display_name: undefined,
+        params: {
+          endpoint: "https://generativelanguage.googleapis.com/v1beta/",
+          model_name: "gemini-2.5-flash",
+          api_key: "AIza-test-key-123",
+          retrieval_store_id: "fileSearchStores/hr-demo",
+          retrieval_mode: "file_search",
+          system_instructions: "Answer only from the retrieved HR files.",
+        },
+      });
+    });
+  });
+
+  it("should require retrieval store ID for GeminiFileSearchTarget", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType(user, "GeminiFileSearchTarget");
+    fireEvent.change(
+      screen.getByPlaceholderText("https://generativelanguage.googleapis.com/v1beta/"),
+      { target: { value: "https://generativelanguage.googleapis.com/v1beta/" } }
+    );
+    await user.type(screen.getByPlaceholderText("e.g. gpt-4o, dall-e-3"), "gemini-2.5-flash");
+    fireEvent.change(screen.getByPlaceholderText("API key (encrypted for local persistence)"), {
+      target: { value: "AIza-test-key-123" },
+    });
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Please provide a retrieval store ID")).toBeInTheDocument();
     });
   });
 });

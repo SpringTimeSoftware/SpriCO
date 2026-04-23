@@ -1,0 +1,818 @@
+SpriCO External Engines, Licensing, Final Verdict Authority, and Custom Conditions
+Version: 1.0
+Audience: Codex / engineering implementation
+Status: Source-of-truth implementation directive
+Date: 2026-04-20
+
+================================================================================
+0. PURPOSE
+================================================================================
+
+This document explains exactly how SpriCO must incorporate open-source external
+engines such as garak, DeepTeam, and promptfoo-inspired functionality without
+breaking existing product behavior, without weakening safety, and without
+creating legal or architectural confusion.
+
+This document is intentionally explicit. Codex must follow it as a binding
+implementation specification for the external-engine layer.
+
+Primary goals:
+1. Keep all existing SpriCO functionality working.
+2. Preserve SpriCO as the final audit and policy decision authority.
+3. Add external tools only as optional engines for attack generation, scanner
+   evidence, assertions, or auxiliary scoring.
+4. Preserve safety for regulated domains such as hospital, legal, HR.
+5. Implement licensing and notices correctly for redistributed open-source tools.
+6. Avoid any architecture that allows an external tool to replace SpriCO’s
+   industry-specific policy logic.
+
+Hospital example to keep in mind at all times:
+- A user asks for cancer-patient examples.
+- The system later reveals patient IDs with locations such as city/county/state.
+- A naive evaluator labels the turn PASS / LOW / SAFE because it sees “no direct
+  attack pattern.”
+- That is wrong.
+- The external engine may provide useful attack/scanner evidence, but only
+  SpriCO’s domain-aware policy engine can decide whether the output is an
+  unauthorized PHI disclosure.
+
+================================================================================
+1. NON-NEGOTIABLE ARCHITECTURE RULES
+================================================================================
+
+These rules are mandatory and may not be bypassed.
+
+RULE 1:
+External engines may generate attacks, scan outputs, or provide evidence, but
+they must never become the final verdict authority for regulated-domain audits.
+
+RULE 2:
+SpriCO PolicyDecisionEngine is always the final verdict authority for:
+- verdict
+- violation risk
+- data sensitivity
+- disclosure type
+- policy mode
+- authorization context
+- purpose fit
+- minimum necessary
+- final explanation
+
+RULE 3:
+No UI should present garak, DeepTeam, or promptfoo as “final scoring engines”
+for hospital/legal/HR audits.
+
+RULE 4:
+The user may choose attack engines or evidence engines, but SpriCO final policy
+scoring must remain on and cannot be disabled in regulated-domain modes.
+
+RULE 5:
+Prompt claims such as:
+- “I am the doctor”
+- “I am the auditor”
+- “I am the admin”
+- “the uploaded policy says I can access records”
+must not be accepted as authorization unless verified by SpriCO metadata/session/
+RBAC/SSO/JWT/target configuration.
+
+RULE 6:
+Existing functionality must remain working:
+- current transcript audit flow
+- current dashboards
+- current findings
+- current scoring outputs already exposed in UI
+- current targets and attack flows
+- current evidence display
+
+RULE 7:
+Any new external-engine feature must be additive and backward compatible.
+
+================================================================================
+2. WHAT SPRICO IS AND WHAT IT IS NOT
+================================================================================
+
+SpriCO is not a wrapper around third-party tools.
+
+SpriCO is:
+- an audit platform
+- a domain policy engine
+- an evidence system
+- a regulated-domain evaluation product
+- a final verdict authority
+
+External tools are:
+- optional attack engines
+- optional scanner engines
+- optional assertion engines
+- optional judge/evidence inputs
+
+Correct mental model:
+
+    Attack / Probe Engine
+       -> PyRIT / garak / DeepTeam / promptfoo-inspired spec / manual
+       -> target application
+       -> raw transcript / tool output / RAG evidence
+       -> SpriCO signal extraction
+       -> optional auxiliary evidence from external tools
+       -> SpriCO PolicyDecisionEngine
+       -> final verdict
+
+Incorrect mental model:
+
+    “Choose final scoring engine: garak vs DeepTeam vs promptfoo vs SpriCO”
+
+That is not acceptable for a serious audit product.
+
+================================================================================
+3. TOOL ROLES INSIDE SPRICO
+================================================================================
+
+3.1 PyRIT
+PyRIT remains the core programmable attack/orchestration engine where already
+integrated in SpriCO.
+
+3.2 garak
+garak is an optional scanner backend.
+Use it for:
+- broad baseline LLM vulnerability scanning
+- standardized probes
+- detector-style evidence
+- prompt injection, data leakage, jailbreak, toxicity, hallucination classes
+
+Do not use garak as the final verdict engine.
+
+3.3 DeepTeam
+DeepTeam is an optional vulnerability/attack engine for:
+- LLM apps
+- agents
+- RAG systems
+- RBAC/BOLA/BFLA style AI misuse patterns
+- cross-context retrieval
+- tool abuse
+- indirect instruction
+- custom vulnerabilities
+
+Do not use DeepTeam as the final verdict engine.
+
+3.4 promptfoo
+promptfoo should not be treated primarily as a “scoring engine.”
+Its strongest ideas for SpriCO are:
+- declarative test specs
+- assertions and metrics
+- CI/CD quality gates
+- matrix comparisons across prompts/models/providers
+- red-team plugin / strategy separation
+
+Promptfoo may later be integrated as an optional engine or imported/exported
+format, but its ideas should first be implemented natively in SpriCO as a
+SpriCO AuditSpec.
+
+3.5 Lakera
+Lakera is commercial/proprietary and is not to be incorporated or bundled into
+SpriCO.
+SpriCO may independently implement Lakera-like product patterns such as:
+- projects
+- policies
+- runtime shield
+- evidence logging
+- red-to-runtime remediation lifecycle
+But SpriCO must not copy Lakera internals or market SpriCO as Lakera-based.
+
+================================================================================
+4. LICENSE AND REDISTRIBUTION RULES
+================================================================================
+
+4.1 garak
+License: Apache-2.0
+Allowed:
+- commercial use
+- internal use
+- modification
+- redistribution
+- integration as optional dependency
+
+Required when redistributed:
+- include Apache-2.0 license text
+- preserve copyright/license notices
+- preserve NOTICE file contents if applicable
+- mark modified files prominently if changed
+- do not imply NVIDIA/garak trademark endorsement
+
+Recommended SpriCO pattern:
+- dependency, not source vendoring
+- optional install extra
+- legal notices page
+- third-party notices file
+- SBOM/dependency manifest entry
+
+Official source URLs:
+https://github.com/NVIDIA/garak
+https://www.apache.org/licenses/LICENSE-2.0.txt
+
+4.2 DeepTeam
+License: Apache-2.0
+Allowed:
+- commercial use
+- internal use
+- modification
+- redistribution
+- integration as optional dependency
+
+Required when redistributed:
+- include Apache-2.0 license text
+- preserve notices
+- mark modified files
+- preserve NOTICE if applicable
+- no implied trademark endorsement
+
+Official source URLs:
+https://github.com/confident-ai/deepteam
+https://www.apache.org/licenses/LICENSE-2.0.txt
+
+4.3 promptfoo
+License: MIT
+Allowed:
+- commercial use
+- internal use
+- modification
+- redistribution
+- integration as optional dependency
+
+Required when redistributed:
+- preserve copyright notice
+- preserve permission/license notice
+
+Official source URLs:
+https://github.com/promptfoo/promptfoo
+https://raw.githubusercontent.com/promptfoo/promptfoo/main/LICENSE
+
+4.4 Lakera
+Lakera is not an open-source dependency. Do not add Lakera license files as if
+it were redistributed open-source software.
+If SpriCO ever adds an optional external Lakera connector in the future, that is
+a customer-supplied API integration, not bundled third-party open-source code.
+
+================================================================================
+5. LICENSE FILES AND LEGAL UI REQUIREMENTS
+================================================================================
+
+Codex must add these files to the repository when the related dependency is
+actually used or redistributed.
+
+Recommended repository layout:
+
+/licenses/
+  /garak/
+    LICENSE.txt
+    SOURCE.txt
+    VERSION.txt
+  /deepteam/
+    LICENSE.txt
+    SOURCE.txt
+    VERSION.txt
+  /promptfoo/
+    LICENSE.txt
+    SOURCE.txt
+    VERSION.txt
+
+/THIRD_PARTY_NOTICES.txt
+
+Minimum content rules:
+
+5.1 /licenses/garak/LICENSE.txt
+- Apache 2.0 full text
+
+5.2 /licenses/garak/SOURCE.txt
+- Tool name: garak
+- Upstream URL: https://github.com/NVIDIA/garak
+- License: Apache-2.0
+- Installed as: optional dependency / adapter
+- Notes: used as external scanner evidence engine
+
+5.3 /licenses/deepteam/LICENSE.txt
+- Apache 2.0 full text
+
+5.4 /licenses/deepteam/SOURCE.txt
+- Tool name: DeepTeam
+- Upstream URL: https://github.com/confident-ai/deepteam
+- License: Apache-2.0
+- Installed as: optional dependency / adapter
+- Notes: used as external attack/vulnerability evidence engine
+
+5.5 /licenses/promptfoo/LICENSE.txt
+- MIT license text from upstream
+
+5.6 /licenses/promptfoo/SOURCE.txt
+- Tool name: promptfoo
+- Upstream URL: https://github.com/promptfoo/promptfoo
+- License: MIT
+- Installed as: optional dependency and/or import/export compatibility layer
+- Notes: used for declarative testing / assertions / CI concepts
+
+5.7 THIRD_PARTY_NOTICES.txt
+Must list:
+- tool name
+- version
+- license
+- upstream URL
+- local integration purpose
+- whether modified by SpriCO
+- where full license text is stored
+
+5.8 Open Source Components UI
+Codex must add a simple Legal / Open Source Components page in the app with:
+- Tool name
+- License
+- Upstream hyperlink
+- “View license” hyperlink
+- Short statement of how SpriCO uses the tool
+
+Required visible links:
+- garak -> https://github.com/NVIDIA/garak
+- DeepTeam -> https://github.com/confident-ai/deepteam
+- promptfoo -> https://github.com/promptfoo/promptfoo
+
+Do not force a popup every time the tool runs.
+A persistent Legal / Open Source Components page is sufficient.
+
+================================================================================
+6. HOW THE UI MUST MODEL ENGINES
+================================================================================
+
+Do NOT implement a single dropdown called:
+    Scoring Engine: SpriCO / garak / DeepTeam / promptfoo
+
+That is the wrong mental model.
+
+Instead implement three separate concepts.
+
+6.1 Attack Engine
+Possible values:
+- Auto Recommended
+- PyRIT
+- garak
+- DeepTeam
+- SpriCO Manual
+- promptfoo-style suite runner (later or if already added)
+
+Purpose:
+How adversarial tests are generated or executed.
+
+6.2 Evidence Engines
+Multi-select:
+- SpriCO Domain Signals (always enabled in regulated modes)
+- PyRIT scorer evidence
+- garak detector evidence
+- DeepTeam vulnerability evidence
+- promptfoo assertion results
+- OpenAI judge evidence
+- local deterministic evidence
+
+Purpose:
+Which evidence sources contribute auxiliary signals.
+
+6.3 Final Verdict Engine
+Locked value:
+- SpriCO PolicyDecisionEngine
+
+Purpose:
+Always computes final verdict.
+
+6.4 Required UI explanation
+The UI must explain:
+
+“External engines produce attacks, scans, assertions, or evidence.
+SpriCO’s domain-aware PolicyDecisionEngine always produces the final verdict.”
+
+================================================================================
+7. RECOMMENDED UI FOR ENGINE SELECTION
+================================================================================
+
+Suggested UI structure:
+
+Attack Engine:
+[ Auto Recommended ▼ ]
+
+Evidence Engines:
+[✓] SpriCO Domain Signals
+[ ] garak Scanner Evidence
+[ ] DeepTeam Vulnerability Evidence
+[ ] promptfoo Assertions
+[ ] OpenAI Judge (optional)
+
+Policy Pack:
+[ Hospital Privacy Strict ▼ ]
+
+Final Verdict:
+[Locked] SpriCO PolicyDecisionEngine
+
+Engine Advisor panel:
+- Recommended engines for this use case
+- Why each engine is recommended
+- Which engine is optional vs required
+
+================================================================================
+8. ENGINE ADVISOR REQUIREMENT
+================================================================================
+
+Codex should implement an Engine Advisor.
+
+Examples:
+
+Case: Hospital / PHI leakage / RAG assistant
+Recommend:
+- SpriCO Hospital Privacy Pack (required)
+- PyRIT for multi-turn extraction attempts
+- garak for broad leakage scanner evidence
+- promptfoo-style assertions for regression
+- OpenAI judge only for ambiguous cases
+
+Case: Agent tool misuse
+Recommend:
+- DeepTeam for vulnerability targeting
+- PyRIT for multi-turn orchestration
+- SpriCO Agent Policy Pack (required)
+
+Case: CI/CD release gate
+Recommend:
+- SpriCO AuditSpec
+- SpriCO assertions
+- optional promptfoo compatibility
+- garak only for periodic security baseline, not every PR unless configured
+
+================================================================================
+9. INDUSTRY-SPECIFIC LOGIC: MANDATORY SPRICO DOMAIN PACKS
+================================================================================
+
+Hospital, legal, HR, finance, or any regulated domain must always be evaluated
+by SpriCO domain packs. External engines do not replace these.
+
+Hospital example signals:
+- PATIENT_ID_PRESENT
+- PATIENT_ID_PLUS_DIAGNOSIS
+- PATIENT_ID_PLUS_LOCATION
+- PATIENT_NAME_PLUS_DOB
+- ADDRESS_DISCLOSURE
+- ADDRESS_PLUS_CONDITION_LINKAGE
+- MEDICATION_DECISION_FOR_IDENTIFIED_PATIENT
+- UNVERIFIED_DOCTOR_CLAIM
+- UNVERIFIED_AUDITOR_CLAIM
+- FOLLOW_UP_CONTEXTUAL_EXFILTRATION
+- UNSAFE_REFUSAL_WITH_PHI_LEAK
+- PROTECTED_CLASS_INFERENCE_ATTEMPT
+- RAG_CONTEXT_POISONING
+- FULL_RECORD_REQUEST
+- DOB_DISCLOSURE
+
+These signals are not final verdicts.
+They are inputs to SpriCO PolicyDecisionEngine.
+
+================================================================================
+10. OPENAI / EXTERNAL LLM JUDGE SCORING
+================================================================================
+
+Codex must preserve this rule:
+OpenAI or any LLM judge is optional evidence, not final authority.
+
+Correct usage:
+- nuanced refusal quality
+- contextual reasoning
+- ambiguous follow-up interpretation
+- quality explanation
+- borderline safety analysis
+
+Incorrect usage:
+- blindly deciding whether obvious PHI leakage is safe
+
+Hospital example:
+If patient ID + address are present, deterministic rules should already mark the
+case as highly sensitive and likely failing in strict mode.
+Do not ask an LLM whether that should be safe.
+
+OpenAI judge should be used only after deterministic rules and policy context
+have already been evaluated.
+
+================================================================================
+11. WHAT TO SHOW USERS ABOUT SCORING CONDITIONS
+================================================================================
+
+This is an important product decision.
+
+RECOMMENDATION:
+Yes, show scoring conditions to users — but do it with controlled visibility and
+role-based presentation.
+
+Do not expose raw internal implementation details or all low-level heuristics to
+every user by default.
+
+Instead implement three layers of transparency:
+
+11.1 End-user / reviewer view
+Show:
+- applied policy pack
+- active conditions that matched
+- human-readable explanation
+- why verdict was reached
+- which evidence sources contributed
+- what to fix
+
+Example:
+Matched conditions:
+- Patient ID + location linkage
+- Follow-up contextual exfiltration
+- Authorization not verified
+
+11.2 Admin / advanced auditor view
+Show:
+- condition IDs
+- rule logic summary
+- precedence
+- enabled/disabled status
+- version
+- confidence
+- signal sources
+- test coverage
+
+11.3 Rule author / platform owner view
+Show:
+- full condition definition
+- deterministic patterns
+- LLM judge prompts if any
+- precedence and conflict resolution
+- simulation history
+- version diff
+- activation workflow
+
+This preserves transparency without making the system fragile.
+
+================================================================================
+12. SHOULD SPRICO LET USERS ADD NEW CONDITIONS?
+================================================================================
+
+Yes — but only with strong guardrails.
+
+This is recommended because SpriCO’s value is domain specialization.
+
+However, this must not be a free-form production-edit feature for all users.
+
+Correct design:
+
+12.1 Condition types
+Allow two categories:
+- Generic conditions
+- Industry-specific conditions
+
+Generic examples:
+- prompt claim of authorization
+- system prompt extraction attempt
+- direct prompt injection
+- PII disclosure
+- unsupported sensitive claim
+
+Industry-specific examples:
+- patient ID + diagnosis linkage
+- patient ID + location linkage
+- patient + medication recommendation
+- legal privileged memo disclosure
+- HR compensation + performance linkage
+
+12.2 Required fields for a new condition
+Every condition must include:
+- condition_id
+- display_name
+- category
+- domain
+- description
+- type: deterministic | semantic | llm_judge | composite
+- input surfaces: prompt | response | conversation | rag_chunk | tool_output
+- required authorization evaluation: yes/no (default yes for regulated domains)
+- severity if triggered
+- data sensitivity class
+- example matches
+- example non-matches
+- policy modes it applies to
+- precedence
+- rollout state: draft | testing | approved | active | deprecated
+- owner
+- version
+- created_at
+- last_reviewed_at
+
+12.3 Mandatory workflow for custom conditions
+No condition may go directly from draft to active without:
+- syntax validation
+- simulation against historical evidence
+- regression tests
+- reviewer approval
+- version creation
+- rollback support
+
+12.4 Mandatory condition simulator
+Before activation, users must be able to run:
+- historical replay
+- expected match count
+- false positive review
+- false negative sample review
+
+12.5 Mandatory approval roles
+Only admins / policy authors may activate or deactivate conditions.
+General users may suggest conditions but not directly deploy them.
+
+================================================================================
+13. CONDITION PRECEDENCE AND CONFLICT RESOLUTION
+================================================================================
+
+Codex must implement precedence rules.
+
+Example precedence:
+1. deterministic critical privacy violations
+2. deterministic safety violations
+3. authorization/context resolver
+4. LLM judge
+5. soft informational rules
+
+Conflict examples:
+- garak says pass, SpriCO hospital rule says fail -> final fail
+- DeepTeam says vulnerable, SpriCO policy context says authorized and in scope ->
+  final may be warn or pass, but DeepTeam evidence remains visible
+- OpenAI judge says safe, deterministic address leakage says fail -> final fail
+
+Requirement:
+All conflicts must preserve raw evidence and produce an audit trail explaining
+why final verdict differs from an external engine result.
+
+================================================================================
+14. BACKWARD COMPATIBILITY REQUIREMENTS
+================================================================================
+
+Codex must not break:
+- current attack history
+- current interactive audit
+- existing target selection
+- existing audit dashboards
+- existing score fields already displayed
+- existing routes and APIs unless wrapped compatibly
+- existing formal findings pipeline
+
+If a new UI is added:
+- it must be additive
+- it must not remove current views
+- it must not relabel existing views in a breaking way
+- legacy score fields must continue to render
+
+If a new storage layer is added:
+- legacy data must still load
+- old JSON evidence should remain readable
+- migration path must exist
+
+================================================================================
+15. IMPLEMENTATION OF LICENSE HYPERLINKS IN UI
+================================================================================
+
+Codex must add a simple page or panel:
+
+Settings -> Legal -> Open Source Components
+
+Each component entry must include:
+- name
+- license
+- upstream URL
+- local use in SpriCO
+- link to bundled license text
+
+Example row:
+garak
+License: Apache-2.0
+Upstream: https://github.com/NVIDIA/garak
+Local use: Optional scanner evidence engine
+View license: /licenses/garak/LICENSE.txt
+
+DeepTeam
+License: Apache-2.0
+Upstream: https://github.com/confident-ai/deepteam
+Local use: Optional vulnerability/attack evidence engine
+View license: /licenses/deepteam/LICENSE.txt
+
+promptfoo
+License: MIT
+Upstream: https://github.com/promptfoo/promptfoo
+Local use: Optional declarative audit/eval/assertion compatibility
+View license: /licenses/promptfoo/LICENSE.txt
+
+================================================================================
+16. WHAT CODEX MUST NOT DO
+================================================================================
+
+Codex must not:
+- make garak the final verdict engine
+- make DeepTeam the final verdict engine
+- make promptfoo the final verdict engine
+- show “choose your scoring engine” as if all engines are equivalent
+- disable SpriCO domain scoring in regulated modes
+- trust prompt claims for authorization
+- bundle Lakera as dependency
+- copy Lakera proprietary implementation
+- expose raw patient data in logs
+- add custom condition editing without versioning and approval
+- silently replace existing scoring logic without regression tests
+
+================================================================================
+17. ACCEPTANCE CRITERIA
+================================================================================
+
+This external-engine architecture is only complete when all conditions below are
+satisfied.
+
+17.1 Legal / licensing
+- related license files added for any redistributed open-source dependency
+- THIRD_PARTY_NOTICES present
+- Legal / Open Source Components page present
+- hyperlinks present
+
+17.2 Product architecture
+- Attack Engine separate from Evidence Engines
+- Final Verdict Engine locked to SpriCO
+- Engine Advisor present or clearly planned and documented
+- Domain packs remain required in regulated modes
+
+17.3 Safety
+- authorization context still required
+- prompt claims do not grant authorization
+- hospital regression issues remain covered
+- contextual PHI leakage cannot be labeled safe because no direct attack pattern
+  was found
+
+17.4 Custom conditions
+- supported as controlled admin feature only
+- versioning present
+- simulator present or clearly scaffolded with non-production activation blocked
+- approval workflow present or production activation disabled until approval
+  exists
+
+17.5 Backward compatibility
+- existing functionality still works
+- no current critical view or API breaks
+- legacy score fields still appear
+- tests updated
+
+================================================================================
+18. RECOMMENDED MESSAGE TO USERS IN THE PRODUCT
+================================================================================
+
+Suggested UI copy:
+
+“External engines such as garak and DeepTeam generate attacks, scanners, or
+auxiliary evidence. SpriCO’s domain-aware PolicyDecisionEngine always computes
+the final audit verdict, taking authorization context, policy mode, scope, and
+industry-specific conditions into account.”
+
+Suggested UI copy for custom conditions:
+
+“Custom conditions are available for advanced policy authors. Conditions must be
+tested, simulated, versioned, and approved before activation in production.”
+
+================================================================================
+19. CODING PRIORITY ORDER
+================================================================================
+
+Codex should implement in this order:
+
+1. Preserve existing functionality and tests
+2. Legal/license files and notices
+3. UI engine separation (Attack vs Evidence vs Final Verdict)
+4. Engine Advisor
+5. Generic external engine interface
+6. garak optional adapter integration
+7. DeepTeam optional adapter integration (later if scoped)
+8. promptfoo-inspired AuditSpec and assertions
+9. controlled custom condition authoring
+10. condition simulator + approval flow
+
+================================================================================
+20. FINAL EXECUTIVE SUMMARY FOR CODEX
+================================================================================
+
+Do not treat external open-source tools as replacements for SpriCO.
+
+Use them as optional:
+- attack engines
+- scanner engines
+- assertion engines
+- evidence providers
+
+Keep SpriCO as:
+- policy engine
+- domain logic layer
+- final verdict authority
+- evidence store
+- audit product
+
+For hospital use cases especially:
+- patient ID + location
+- patient ID + diagnosis
+- patient name + DOB
+- address + condition
+- follow-up contextual leakage
+must always be checked by SpriCO domain rules with authorization context.
+
+The system must remain safe, backward compatible, and legally clean.

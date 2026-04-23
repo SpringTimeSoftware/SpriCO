@@ -48,4 +48,40 @@ export const useChatWindowStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingHorizontalS,
   },
+  interactiveSummaryBar: {
+    flexShrink: 0,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: tokens.spacingHorizontalL,
+    flexWrap: 'wrap',
+  },
+  interactiveSummaryMeta: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+    minWidth: '260px',
+  },
+  interactiveSummaryTitle: {
+    color: tokens.colorNeutralForeground1,
+  },
+  interactiveSummarySubtext: {
+    color: tokens.colorNeutralForeground3,
+  },
+  interactiveSummaryBadges: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+    flexWrap: 'wrap',
+  },
+  savedReplayBanner: {
+    flexShrink: 0,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    color: tokens.colorNeutralForeground2,
+  },
 })

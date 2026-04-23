@@ -297,26 +297,26 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
                     elif dtype == "tool_call":
                         # Filter tool_call fields based on type
                         tool_type = stored.get("type")
+                        if tool_type == "file_search_call":
+                            # Retrieval/file-search tool calls are provider-managed evidence artifacts.
+                            # Replaying them into the next Responses API request is not required for
+                            # conversational continuity and can fail if provider-specific output IDs
+                            # are missing or expired. Keep them in memory for evidence/debugging only.
+                            continue
                         if tool_type == "web_search_call":
                             # Web search call structure
-                            input_items.append(
-                                {
-                                    "type": stored["type"],
-                                    "call_id": stored.get("call_id"),
-                                    "query": stored.get("query"),
-                                }
-                            )
+                            filtered: dict[str, Any] = {"type": stored["type"]}
+                            for key in ("id", "call_id", "status", "query"):
+                                if key in stored and stored[key] is not None:
+                                    filtered[key] = stored[key]
+                            input_items.append(filtered)
                         else:
-                            # For unknown tool types, try to include only known fields
+                            # For provider tool calls such as file_search_call, preserve the identifier and
+                            # replay-safe metadata OpenAI expects on subsequent turns.
                             filtered = {"type": stored["type"]}
-                            if "call_id" in stored:
-                                filtered["call_id"] = stored["call_id"]
-                            if "query" in stored:
-                                filtered["query"] = stored["query"]
-                            if "name" in stored:
-                                filtered["name"] = stored["name"]
-                            if "arguments" in stored:
-                                filtered["arguments"] = stored["arguments"]
+                            for key in ("id", "call_id", "status", "query", "queries", "name", "arguments"):
+                                if key in stored and stored[key] is not None:
+                                    filtered[key] = stored[key]
                             input_items.append(filtered)
 
                 if dtype == "function_call_output":
@@ -572,6 +572,45 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         """
         return True
 
+    @staticmethod
+    def _safe_model_dump(item: Any) -> dict[str, Any]:
+        if isinstance(item, dict):
+            return dict(item)
+        model_dump = getattr(item, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                return dumped
+        return {}
+
+    def _extract_response_annotations(self, *, section_content: list[Any]) -> list[dict[str, Any]]:
+        annotations: list[dict[str, Any]] = []
+        for content_item in section_content:
+            item_dump = self._safe_model_dump(content_item)
+            raw_annotations = item_dump.get("annotations")
+            if raw_annotations is None and hasattr(content_item, "annotations"):
+                raw_annotations = getattr(content_item, "annotations")
+            if not raw_annotations:
+                continue
+            for annotation in raw_annotations:
+                annotation_dump = self._safe_model_dump(annotation)
+                if annotation_dump:
+                    annotations.append(annotation_dump)
+                elif isinstance(annotation, str):
+                    annotations.append({"value": annotation})
+        return annotations
+
+    @staticmethod
+    def _extract_file_search_results(raw_section: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_results = raw_section.get("results") or raw_section.get("search_results") or []
+        if not isinstance(raw_results, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for result in raw_results:
+            if isinstance(result, dict):
+                normalized.append(result)
+        return normalized
+
     def _parse_response_output_section(
         self, *, section: Any, message_piece: MessagePiece, error: Optional[PromptResponseError]
     ) -> MessagePiece | None:
@@ -593,12 +632,21 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
         section_type = section.type
         piece_type: PromptDataType = "text"  # Default, always set!
         piece_value = ""
+        piece_prompt_metadata: Optional[dict[str, Any]] = None
 
         if section_type == MessagePieceType.MESSAGE:
             section_content = section.content
             if len(section_content) == 0:
                 raise EmptyResponseException(message="The chat returned an empty message section.")
             piece_value = section_content[0].text
+            annotations = self._extract_response_annotations(section_content=section_content)
+            if annotations:
+                piece_prompt_metadata = {
+                    "retrieval_evidence": {
+                        "source": "openai_responses_api",
+                        "response_annotations": annotations,
+                    }
+                }
 
         elif section_type == MessagePieceType.REASONING:
             # Store reasoning in memory for debugging/logging, but won't be sent back to API
@@ -620,6 +668,20 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
                 separators=(",", ":"),
             )
             piece_type = "function_call"
+
+        elif section_type == MessagePieceType.FILE_SEARCH_CALL:
+            raw_section = self._safe_model_dump(section)
+            normalized_results = self._extract_file_search_results(raw_section)
+            piece_value = json.dumps(raw_section or {"type": "file_search_call"}, separators=(",", ":"))
+            piece_type = "tool_call"
+            piece_prompt_metadata = {
+                "retrieval_evidence": {
+                    "source": "openai_responses_api",
+                    "tool_type": "file_search_call",
+                    "file_search_call": raw_section,
+                    "results": normalized_results,
+                }
+            }
 
         elif section_type == MessagePieceType.WEB_SEARCH_CALL:
             # Forward web_search_call with only API-expected fields
@@ -668,6 +730,7 @@ class OpenAIResponseTarget(OpenAITarget, PromptChatTarget):
             labels=message_piece.labels,
             prompt_target_identifier=message_piece.prompt_target_identifier,
             attack_identifier=message_piece.attack_identifier,
+            prompt_metadata=piece_prompt_metadata,
             original_value_data_type=piece_type,
             response_error=error or "none",
         )

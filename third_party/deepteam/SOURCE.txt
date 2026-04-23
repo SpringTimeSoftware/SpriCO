@@ -1,0 +1,6 @@
+Tool: deepteam
+Upstream URL: https://github.com/confident-ai/deepteam
+License: Apache-2.0
+Purpose in SpriCO: Optional vulnerability/attack evidence engine for LLM, agent, and RAG testing.
+Bundling mode: Optional dependency / adapter (recommended)
+Modified by SpriCO: [fill in build/release process]

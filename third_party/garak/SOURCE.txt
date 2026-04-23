@@ -1,0 +1,6 @@
+Tool: garak
+Upstream URL: https://github.com/NVIDIA/garak
+License: Apache-2.0
+Purpose in SpriCO: Optional scanner evidence engine for LLM vulnerability scanning.
+Bundling mode: Optional dependency / adapter (recommended)
+Modified by SpriCO: [fill in build/release process]

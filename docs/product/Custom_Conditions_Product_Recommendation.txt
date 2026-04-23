@@ -1,0 +1,63 @@
+CUSTOM CONDITIONS PRODUCT RECOMMENDATION
+
+Recommendation: YES, SpriCO should support custom conditions, but only with
+controlled authoring and approval.
+
+Do not expose raw low-level rule editing to every user.
+
+Recommended product layers:
+
+1. Reviewer view
+- Show matched conditions
+- Show human-readable explanations
+- Show evidence and suggested remediation
+
+2. Advanced auditor / admin view
+- Show condition IDs, category, precedence, version, confidence, signal source
+
+3. Policy author view
+- Create/edit conditions
+- Run simulator
+- Replay against historical evidence
+- Save as draft
+- Request approval
+- Activate after approval
+
+Custom condition categories:
+- Generic
+- Hospital
+- Legal
+- HR
+- Finance
+- Agent
+- RAG
+
+Mandatory fields:
+- condition_id
+- name
+- description
+- domain
+- rule type
+- input surfaces
+- severity
+- data sensitivity
+- policy modes
+- authorization required flag
+- precedence
+- rollout state
+- owner
+- version
+
+Mandatory workflow:
+draft -> tested -> approved -> active -> deprecated
+
+No direct production activation without:
+- validation
+- historical replay
+- regression tests
+- approval
+- rollback path
+
+Recommended UI wording:
+“Custom conditions allow teams to encode organization-specific or industry-
+specific rules. Production activation requires testing, approval, and versioning.”

@@ -8,6 +8,7 @@ import {
   DialogActions,
   Button,
   Input,
+  Textarea,
   Label,
   Select,
   tokens,
@@ -25,6 +26,8 @@ const SUPPORTED_TARGET_TYPES = [
   'OpenAIVideoTarget',
   'OpenAITTSTarget',
   'OpenAIResponseTarget',
+  'OpenAIVectorStoreTarget',
+  'GeminiFileSearchTarget',
 ] as const
 
 interface CreateTargetDialogProps {
@@ -35,19 +38,39 @@ interface CreateTargetDialogProps {
 
 export default function CreateTargetDialog({ open, onClose, onCreated }: CreateTargetDialogProps) {
   const styles = useCreateTargetDialogStyles()
+  const [displayName, setDisplayName] = useState('')
   const [targetType, setTargetType] = useState('')
   const [endpoint, setEndpoint] = useState('')
   const [modelName, setModelName] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [retrievalStoreId, setRetrievalStoreId] = useState('')
+  const [systemInstructions, setSystemInstructions] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [fieldErrors, setFieldErrors] = useState<{ targetType?: string; endpoint?: string }>({})
+  const [fieldErrors, setFieldErrors] = useState<{
+    targetType?: string
+    endpoint?: string
+    modelName?: string
+    apiKey?: string
+    retrievalStoreId?: string
+  }>({})
+
+  const isRetrievalTarget = targetType === 'OpenAIVectorStoreTarget' || targetType === 'GeminiFileSearchTarget'
+  const endpointPlaceholder = targetType === 'GeminiFileSearchTarget'
+    ? 'https://generativelanguage.googleapis.com/v1beta/'
+    : 'https://your-resource.openai.azure.com/'
+  const retrievalPlaceholder = targetType === 'GeminiFileSearchTarget'
+    ? 'fileSearchStores/...'
+    : 'vs_...'
 
   const resetForm = () => {
+    setDisplayName('')
     setTargetType('')
     setEndpoint('')
     setModelName('')
     setApiKey('')
+    setRetrievalStoreId('')
+    setSystemInstructions('')
     setError(null)
     setFieldErrors({})
   }
@@ -58,9 +81,18 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
   }
 
   const handleSubmit = async () => {
-    const errors: { targetType?: string; endpoint?: string } = {}
+    const errors: {
+      targetType?: string
+      endpoint?: string
+      modelName?: string
+      apiKey?: string
+      retrievalStoreId?: string
+    } = {}
     if (!targetType) errors.targetType = 'Please select a target type'
     if (!endpoint) errors.endpoint = 'Please provide an endpoint URL'
+    if (isRetrievalTarget && !modelName.trim()) errors.modelName = 'Please provide a model name'
+    if (isRetrievalTarget && !apiKey.trim()) errors.apiKey = 'Please provide an API key'
+    if (isRetrievalTarget && !retrievalStoreId.trim()) errors.retrievalStoreId = 'Please provide a retrieval store ID'
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors)
       return
@@ -76,9 +108,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
       }
       if (modelName) params.model_name = modelName
       if (apiKey) params.api_key = apiKey
+      if (isRetrievalTarget) {
+        params.retrieval_store_id = retrievalStoreId.trim()
+        params.retrieval_mode = 'file_search'
+      }
+      if (systemInstructions.trim()) params.system_instructions = systemInstructions.trim()
 
       await targetsApi.createTarget({
         type: targetType,
+        display_name: displayName || undefined,
         params,
       })
       resetForm()
@@ -108,6 +146,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
               )}
 
               <Field
+                label="Display Name"
+              >
+                <Input
+                  placeholder="Optional label for this target"
+                  value={displayName}
+                  onChange={(_, data) => setDisplayName(data.value)}
+                />
+              </Field>
+
+              <Field
                 label="Target Type"
                 required
                 validationMessage={fieldErrors.targetType}
@@ -131,7 +179,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                 validationState={fieldErrors.endpoint ? 'error' : 'none'}
               >
                 <Input
-                  placeholder="https://your-resource.openai.azure.com/"
+                  placeholder={endpointPlaceholder}
                   value={endpoint}
                   onChange={(_, data) => setEndpoint(data.value)}
                 />
@@ -142,17 +190,58 @@ export default function CreateTargetDialog({ open, onClose, onCreated }: CreateT
                   placeholder="e.g. gpt-4o, dall-e-3"
                   value={modelName}
                   onChange={(_, data) => setModelName(data.value)}
+                  aria-invalid={fieldErrors.modelName ? 'true' : undefined}
                 />
               </Field>
+
+              {fieldErrors.modelName && (
+                <Label size="small" style={{ color: tokens.colorPaletteRedForeground1 }}>
+                  {fieldErrors.modelName}
+                </Label>
+              )}
 
               <Field label="API Key">
                 <Input
                   type="password"
-                  placeholder="API key (stored in memory only)"
+                  placeholder="API key (encrypted for local persistence)"
+                  autoComplete="current-password"
                   value={apiKey}
                   onChange={(_, data) => setApiKey(data.value)}
+                  aria-invalid={fieldErrors.apiKey ? 'true' : undefined}
                 />
               </Field>
+
+              {fieldErrors.apiKey && (
+                <Label size="small" style={{ color: tokens.colorPaletteRedForeground1 }}>
+                  {fieldErrors.apiKey}
+                </Label>
+              )}
+
+              {isRetrievalTarget && (
+                <Field
+                  label="Retrieval Store ID"
+                  required
+                  validationMessage={fieldErrors.retrievalStoreId}
+                  validationState={fieldErrors.retrievalStoreId ? 'error' : 'none'}
+                >
+                  <Input
+                    placeholder={retrievalPlaceholder}
+                    value={retrievalStoreId}
+                    onChange={(_, data) => setRetrievalStoreId(data.value)}
+                  />
+                </Field>
+              )}
+
+              {isRetrievalTarget && (
+                <Field label="System Instructions">
+                  <Textarea
+                    placeholder="Optional retrieval-aware instructions for this target"
+                    value={systemInstructions}
+                    onChange={(_, data) => setSystemInstructions(data.value)}
+                    resize="vertical"
+                  />
+                </Field>
+              )}
 
               <Label size="small" style={{ color: tokens.colorNeutralForeground3 }}>
                 Targets can also be auto-populated by adding an initializer (e.g. <code>airt</code>) to your{' '}

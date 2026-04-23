@@ -5,11 +5,24 @@
 Target mappers – domain → DTO translation for target-related models.
 """
 
+from typing import Optional
+
 from pyrit.backend.models.targets import TargetInstance
 from pyrit.prompt_target import PromptTarget
 
 
-def target_object_to_instance(target_registry_name: str, target_obj: PromptTarget) -> TargetInstance:
+def target_object_to_instance(
+    target_registry_name: str,
+    target_obj: PromptTarget,
+    *,
+    display_name: Optional[str] = None,
+    is_active: bool = False,
+    created_at: Optional[str] = None,
+    persistence_scope: Optional[str] = None,
+    credential_strategy: Optional[str] = None,
+    is_archived: bool = False,
+    archived_at: Optional[str] = None,
+) -> TargetInstance:
     """
     Build a TargetInstance DTO from a registry target object.
 
@@ -44,6 +57,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
 
     return TargetInstance(
         target_registry_name=target_registry_name,
+        display_name=display_name or target_registry_name,
         target_type=identifier.class_name,
         endpoint=params.get("endpoint") or None,
         model_name=params.get("model_name") or None,
@@ -52,4 +66,10 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         max_requests_per_minute=params.get("max_requests_per_minute"),
         supports_multi_turn=target_obj.capabilities.supports_multi_turn,
         target_specific_params=combined_specific,
+        is_active=is_active,
+        created_at=created_at,
+        persistence_scope=persistence_scope,
+        credential_strategy=credential_strategy,
+        is_archived=is_archived,
+        archived_at=archived_at,
     )

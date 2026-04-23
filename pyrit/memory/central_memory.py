@@ -41,4 +41,11 @@ class CentralMemory:
         if cls._memory_instance:
             logger.info(f"Using existing memory instance: {type(cls._memory_instance).__name__}")
             return cls._memory_instance
-        raise ValueError("Central memory instance has not been set. Use `set_memory_instance` to set it.")
+        logger.warning(
+            "Central memory instance has not been set. "
+            "Falling back to default SQLiteMemory."
+        )
+        from pyrit.memory.sqlite_memory import SQLiteMemory
+
+        cls._memory_instance = SQLiteMemory()
+        return cls._memory_instance

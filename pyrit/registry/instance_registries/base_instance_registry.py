@@ -123,6 +123,22 @@ class BaseInstanceRegistry(ABC, RegistryProtocol[MetadataT], Generic[T, Metadata
         """
         return dict(self._registry_items)
 
+    def unregister(self, name: str) -> bool:
+        """
+        Remove a registered instance by name.
+
+        Args:
+            name: The registry name of the instance.
+
+        Returns:
+            True if an instance was removed, False otherwise.
+        """
+        if name not in self._registry_items:
+            return False
+        del self._registry_items[name]
+        self._metadata_cache = None
+        return True
+
     def list_metadata(
         self,
         *,
