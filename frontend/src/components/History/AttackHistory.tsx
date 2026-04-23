@@ -150,7 +150,7 @@ export default function AttackHistory({ onOpenAttack, onOpenSavedInteractiveAudi
     <div className={styles.root}>
       <div className={styles.header}>
         <div className={styles.headerRow}>
-          <Text size={500} weight="semibold">Attack History</Text>
+          <Text size={500} weight="semibold">PyRIT Attack History</Text>
           <Button
             appearance="subtle"
             icon={<ArrowSyncRegular />}
@@ -172,11 +172,12 @@ export default function AttackHistory({ onOpenAttack, onOpenSavedInteractiveAudi
         />
         <div className={styles.scopeNotice}>
           <Text size={200} className={styles.scopeNoticeText}>
-            Attack History reads PyRIT-backed manual attack sessions from PyRIT memory and saved Interactive Audit runs from the audit database. Scanner runs, Shield checks, Red Team Campaigns, Evidence, and Findings keep their own histories.
+            This page shows PyRIT-backed attack sessions only. Saved Interactive Audit replays from audit.db can appear below when they reference PyRIT-backed interactive runs. Other SpriCO activity lives under Activity History, Audit Runs, Scanner Run Reports, Red Team Campaigns, Shield, Evidence Center, or Findings.
           </Text>
         </div>
         <div className={styles.historyLinks} aria-label="Activity history links">
           <HistoryLink className={styles.historyLinkCard} title="PyRIT Attack Sessions" description="The table below reads PyRIT CentralMemory attack sessions." disabled />
+          <HistoryLink className={styles.historyLinkCard} title="Activity History" description="Cross-workflow activity across audit, scanner, campaign, Shield, evidence, and findings stores." onClick={onNavigate ? () => onNavigate('activity-history') : undefined} />
           <HistoryLink className={styles.historyLinkCard} title="Audit Runs" description="Structured and saved interactive audit runs." onClick={onOpenAuditRuns ?? (onNavigate ? () => onNavigate('audit') : undefined)} />
           <HistoryLink className={styles.historyLinkCard} title="Open Scanner Run Reports" description="Every LLM Vulnerability Scanner job, including no-finding runs." onClick={onNavigate ? () => onNavigate('scanner-reports') : undefined} />
           <HistoryLink className={styles.historyLinkCard} title="Red Team Campaigns" description="Objective-driven campaign runs." onClick={onNavigate ? () => onNavigate('red') : undefined} />

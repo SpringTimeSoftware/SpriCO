@@ -90,6 +90,8 @@ export default function DashboardPage({ onOpenRun }: DashboardPageProps) {
                 <section className="audit-kpi-grid">
                   <SummaryCard label="Scanner Runs Total" value={scannerSummary.scanner_runs_total.toString()} detail="All scanner job statuses" />
                   <SummaryCard label="Completed No Findings" value={scannerSummary.scanner_runs_with_no_findings.toString()} detail="No actionable findings" tone="pass" />
+                  <SummaryCard label="Timeout Runs" value={String(scannerSummary.scanner_runs_timeout ?? 0)} detail="Not evaluated as safe" tone="warn" />
+                  <SummaryCard label="Failed / Not Evaluated" value={String(scannerSummary.scanner_runs_failed ?? 0)} detail="No safe verdict" tone="fail" />
                   <SummaryCard label="Runs With Findings" value={scannerSummary.scanner_runs_with_findings.toString()} detail="Actionable scanner issues" tone="warn" />
                   <SummaryCard label="High / Critical Scanner Findings" value={scannerSummary.high_critical_scanner_findings.toString()} detail="Scanner-linked triage items" tone="critical" />
                   <SummaryCard label="Scanner Evidence" value={scannerSummary.scanner_evidence_count.toString()} detail="Evidence Center records" />

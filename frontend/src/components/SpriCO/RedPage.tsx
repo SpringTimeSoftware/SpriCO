@@ -51,12 +51,15 @@ export default function RedPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [objectiveResponse, policyResponse] = await Promise.all([
+        const [objectiveResponse, policyResponse, scanResponse] = await Promise.all([
           spricoRedApi.objectives(),
           spricoPoliciesApi.list(),
+          spricoRedApi.listScans().catch(() => []),
         ])
         setObjectives(objectiveResponse)
         setPolicies(policyResponse)
+        setScans(scanResponse)
+        setSelectedScan(scanResponse[0] ?? null)
         if (policyResponse.length > 0 && !policyResponse.some(policy => policy.id === policyId)) {
           setPolicyId(policyResponse[0].id)
         }
@@ -153,7 +156,7 @@ export default function RedPage() {
       </header>
 
       <PageHelp>
-        Run objective-driven attack campaigns against a demo or real target. Campaign outputs are scored by SpriCO domain policy and stored as evidence and findings.
+        Current engine: SpriCO-native campaign runner. Demo mock target is active; real configured HTTP target execution is partial and permission-gated. DeepTeam, promptfoo, and PyRIT orchestrator runtime modes are not implemented in this phase.
       </PageHelp>
 
       <ErrorMessage error={error} />
@@ -255,6 +258,9 @@ export default function RedPage() {
             </div>
             <div className="sprico-message">
               garak, DeepTeam, promptfoo, PyRIT scorers, and optional judge models are evidence sources only. Final Verdict Authority is locked to SpriCO PolicyDecisionEngine.
+            </div>
+            <div className="sprico-message">
+              Roadmap: real PyRIT orchestrator mode, SpriCO AuditSpec / promptfoo-style assertions, DeepTeam adapter, and judge evidence with PHI-safe controls.
             </div>
             <div className="sprico-grid">
               <div className="sprico-kpi">

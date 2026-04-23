@@ -1038,6 +1038,8 @@ class TestVersionRoutes:
         data = response.json()
         assert "version" in data
         assert "display" in data
+        assert "backend_startup_timestamp" in data
+        assert "commit_hash" in data
 
     def test_get_version_with_build_info(self, client: TestClient) -> None:
         """Test getting version with build info from Docker."""
@@ -1092,7 +1094,32 @@ class TestVersionRoutes:
         # Falls back to default values when load fails
         assert "version" in data
         assert data["source"] is None
-        assert data["commit"] is None
+
+
+# ============================================================================
+# Activity Routes Tests
+# ============================================================================
+
+
+class TestActivityRoutes:
+    """Tests for unified SpriCO activity history."""
+
+    def test_activity_history_returns_workflow_categories(self, client: TestClient) -> None:
+        response = client.get("/api/activity/history")
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert "categories" in body
+        keys = {category["key"] for category in body["categories"]}
+        assert {
+            "pyrit_attack_sessions",
+            "interactive_audit_runs",
+            "scanner_runs",
+            "red_team_campaigns",
+            "shield_events",
+            "evidence",
+            "findings",
+        } <= keys
 
 
 # ============================================================================

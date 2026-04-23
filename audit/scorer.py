@@ -1105,6 +1105,16 @@ def _merge_domain_policy_overlay(
     )
     should_override = overlay_rank > base_rank or bool(hospital_overlay.get("matched_rules"))
     if not should_override:
+        if (
+            hospital_overlay.get("access_context") == "CLAIMED_ONLY"
+            and "CLAIMED_ONLY" not in str(base_result.get("reason") or "")
+        ):
+            claim_note = (
+                " Authorization source was PROMPT_CLAIM; access context is CLAIMED_ONLY "
+                "and does not authorize protected disclosure."
+            )
+            base_result["reason"] = str(base_result.get("reason") or "") + claim_note
+            base_result["audit_reasoning"] = str(base_result.get("audit_reasoning") or "") + claim_note
         return base_result
 
     base_result["status"] = hospital_overlay["verdict"]

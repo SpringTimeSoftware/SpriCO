@@ -88,6 +88,11 @@ async def create_red_scan(request: RedScanRequest) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+@router.get("/red/scans")
+async def list_red_scans() -> list[dict[str, Any]]:
+    return _store.list_scans()
+
+
 @router.get("/red/scans/{scan_id}")
 async def get_red_scan(scan_id: str) -> dict[str, Any]:
     scan = _store.get_scan(scan_id)

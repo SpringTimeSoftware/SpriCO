@@ -1080,6 +1080,7 @@ export interface GarakScanReport extends GarakScanResult {
   data_sensitivity?: string | null
   duration_seconds?: number | null
   finding_ids?: string[]
+  artifact_summary?: Array<{ label: string; status: string; detail?: string }>
 }
 
 export interface GarakScanReportsResponse {
@@ -1094,7 +1095,10 @@ export interface GarakScannerReportSummary {
   scanner_runs_by_profile: Array<{ profile: string; count: number }>
   scanner_runs_with_findings: number
   scanner_runs_with_no_findings: number
+  scanner_runs_timeout?: number
+  scanner_runs_failed?: number
   high_critical_scanner_findings: number
+  scanner_findings_by_severity?: Array<{ severity: string; count: number }>
   scanner_evidence_count: number
   artifacts_stored: number
 }
@@ -1109,6 +1113,42 @@ export interface StorageStatus {
   garak_artifacts_path: string
   uploaded_artifacts_path: string
   record_counts: Record<string, number>
+}
+
+export interface VersionInfo {
+  version: string
+  source?: string | null
+  commit?: string | null
+  commit_hash?: string | null
+  modified?: boolean | null
+  build_timestamp?: string | null
+  backend_startup_timestamp?: string | null
+  display: string
+  database_info?: string | null
+  default_labels?: Record<string, string> | null
+}
+
+export interface ActivityHistoryItem {
+  id: string
+  title: string
+  subtitle?: string
+  status?: string
+  created_at?: string
+}
+
+export interface ActivityHistoryCategory {
+  key: string
+  title: string
+  description: string
+  count: number
+  navigation_view: string
+  items: ActivityHistoryItem[]
+}
+
+export interface ActivityHistoryResponse {
+  generated_at: string
+  scope_note: string
+  categories: ActivityHistoryCategory[]
 }
 
 export interface ShieldCheckRequest {

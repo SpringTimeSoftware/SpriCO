@@ -73,6 +73,8 @@ export default function ScannerRunReportsPage({ onNavigate }: ScannerRunReportsP
             <Metric label="Scanner Runs Total" value={String(summary.scanner_runs_total)} />
             <Metric label="Runs With Findings" value={String(summary.scanner_runs_with_findings)} />
             <Metric label="Completed No Findings" value={String(summary.scanner_runs_with_no_findings)} />
+            <Metric label="Timeout Runs" value={String(summary.scanner_runs_timeout ?? 0)} />
+            <Metric label="Failed / Not Evaluated" value={String(summary.scanner_runs_failed ?? 0)} />
             <Metric label="High / Critical Scanner Findings" value={String(summary.high_critical_scanner_findings)} />
             <Metric label="Scanner Evidence Produced" value={String(summary.scanner_evidence_count)} />
             <Metric label="Artifacts Stored" value={String(summary.artifacts_stored)} />

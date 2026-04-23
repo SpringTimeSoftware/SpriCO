@@ -814,6 +814,8 @@ def test_garak_run_report_api_returns_completed_no_findings_and_profile_resoluti
     assert body["reports"][0]["timeout_seconds"] == 180
     assert body["reports"][0]["duration_seconds"] == 5
     assert body["reports"][0]["artifact_count"] == 1
+    assert body["reports"][0]["artifact_summary"][0]["label"] == "command metadata"
+    assert body["reports"][0]["artifact_summary"][0]["status"] == "saved"
     assert body["summary"]["scanner_runs_total"] == 1
     assert body["summary"]["scanner_runs_with_no_findings"] == 1
 
@@ -836,7 +838,10 @@ def test_garak_reports_path_is_not_treated_as_scan_id(monkeypatch) -> None:
             "scanner_runs_by_profile": [],
             "scanner_runs_with_findings": 0,
             "scanner_runs_with_no_findings": 0,
+            "scanner_runs_timeout": 0,
+            "scanner_runs_failed": 0,
             "high_critical_scanner_findings": 0,
+            "scanner_findings_by_severity": [],
             "scanner_evidence_count": 0,
             "artifacts_stored": 0,
         },
@@ -881,6 +886,7 @@ def test_garak_report_summary_includes_scanner_runs_with_findings(monkeypatch) -
     assert summary["scanner_runs_total"] == 1
     assert summary["scanner_runs_with_findings"] == 1
     assert summary["high_critical_scanner_findings"] == 1
+    assert summary["scanner_findings_by_severity"] == [{"severity": "HIGH", "count": 1}]
     assert summary["scanner_evidence_count"] == 1
     assert summary["artifacts_stored"] == 2
 

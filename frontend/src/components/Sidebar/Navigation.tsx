@@ -22,7 +22,7 @@ import { useNavigationStyles } from './Navigation.styles'
 
 export type ViewName = 'chat' | 'history' | 'config' | 'audit' | 'dashboard'
   | 'heatmap-dashboard' | 'stability-dashboard' | 'findings' | 'prompt-variants' | 'target-help' | 'benchmark-library'
-  | 'garak-scanner' | 'scanner-reports' | 'shield' | 'policy' | 'red' | 'evidence' | 'conditions' | 'open-source-components' | 'external-engines' | 'judge-models' | 'landing'
+  | 'garak-scanner' | 'scanner-reports' | 'shield' | 'policy' | 'red' | 'evidence' | 'conditions' | 'open-source-components' | 'external-engines' | 'judge-models' | 'diagnostics' | 'activity-history' | 'landing'
 
 interface NavigationProps {
   currentView: ViewName
@@ -54,6 +54,7 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
     label: 'Audit Workbench',
     items: [
       { label: 'Interactive Audit', view: 'chat' },
+      { label: 'Activity History', view: 'activity-history' },
       { label: 'Attack History', view: 'history' },
       { label: 'Audit Runs', view: 'audit' },
       { label: 'Findings', view: 'findings' },
@@ -104,6 +105,7 @@ export const NAVIGATION_GROUPS: NavigationGroup[] = [
       { label: 'Open Source Components', view: 'open-source-components' },
       { label: 'External Engine Metadata', view: 'external-engines' },
       { label: 'Judge Models', view: 'judge-models' },
+      { label: 'About / Diagnostics', view: 'diagnostics' },
     ],
   },
 ]

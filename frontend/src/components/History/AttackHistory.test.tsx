@@ -86,7 +86,7 @@ describe('AttackHistory', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByText('Attack History')).toBeInTheDocument()
+    expect(screen.getByText('PyRIT Attack History')).toBeInTheDocument()
     expect(screen.getByTestId('refresh-btn')).toBeInTheDocument()
     expect(screen.getByTestId('attack-class-filter')).toBeInTheDocument()
     expect(screen.getByTestId('outcome-filter')).toBeInTheDocument()
@@ -117,7 +117,8 @@ describe('AttackHistory', () => {
     })
     expect(screen.getByText('No PyRIT attack sessions were found in the active backend storage.')).toBeInTheDocument()
     expect(screen.getByText(/Other SpriCO activity may exist under Audit Runs, Scanner Run Reports, Red Team Campaigns, Shield, Evidence Center, or Findings/)).toBeInTheDocument()
-    expect(screen.getByText(/Attack History reads PyRIT-backed manual attack sessions/)).toBeInTheDocument()
+    expect(screen.getByText(/This page shows PyRIT-backed attack sessions only/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Activity History/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Audit Runs/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Open Scanner Run Reports/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Red Team Campaigns/ })).toBeInTheDocument()
@@ -744,7 +745,7 @@ describe('AttackHistory', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText('Attack History')).toBeInTheDocument()
+      expect(screen.getByText('PyRIT Attack History')).toBeInTheDocument()
     })
 
     expect(screen.queryByTestId('reset-filters-btn')).not.toBeInTheDocument()

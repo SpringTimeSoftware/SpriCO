@@ -1,6 +1,7 @@
 import { createLogger, defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import { readFileSync } from 'fs'
 
 // Suppress noisy ECONNREFUSED proxy errors while the backend is starting.
 // Without this, Vite logs dozens of "http proxy error" stack traces.
@@ -18,9 +19,19 @@ logger.error = (msg, options) => {
   originalError(msg, options)
 }
 
+const packageJson = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')) as { version?: string }
+const frontendBuildTimestamp = process.env.SPRICO_FRONTEND_BUILD_TIMESTAMP || new Date().toISOString()
+const frontendPackageVersion = process.env.SPRICO_FRONTEND_PACKAGE_VERSION || packageJson.version || 'unknown'
+const frontendBuildMarker = process.env.SPRICO_FRONTEND_BUILD_MARKER || `sprico-frontend-${frontendPackageVersion}-${frontendBuildTimestamp}`
+
 // https://vitejs.dev/config/
 export default defineConfig({
   customLogger: logger,
+  define: {
+    __SPRICO_FRONTEND_BUILD_TIMESTAMP__: JSON.stringify(frontendBuildTimestamp),
+    __SPRICO_FRONTEND_PACKAGE_VERSION__: JSON.stringify(frontendPackageVersion),
+    __SPRICO_FRONTEND_BUILD_MARKER__: JSON.stringify(frontendBuildMarker),
+  },
   plugins: [react()],
   resolve: {
     alias: {

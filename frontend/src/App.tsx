@@ -4,6 +4,7 @@ import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
 import TargetConfig from './components/Config/TargetConfig'
 import AttackHistory from './components/History/AttackHistory'
+import ActivityHistoryPage from './components/History/ActivityHistoryPage'
 import { DEFAULT_HISTORY_FILTERS } from './components/History/historyFilters'
 import type { HistoryFilters } from './components/History/historyFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
@@ -27,6 +28,7 @@ import CustomConditionsPage from './components/SpriCO/CustomConditionsPage'
 import OpenSourceComponentsPage from './components/SpriCO/OpenSourceComponentsPage'
 import ExternalEngineMetadataPage from './components/SpriCO/ExternalEngineMetadataPage'
 import JudgeModelsPage from './components/SpriCO/JudgeModelsPage'
+import DiagnosticsPage from './components/SpriCO/DiagnosticsPage'
 import LandingPage from './components/Landing/LandingPage'
 import { versionApi, attacksApi, targetsApi } from './services/api'
 import type { TargetInstance, TargetInfo } from './types'
@@ -275,6 +277,9 @@ function App() {
                 onFiltersChange={setHistoryFilters}
               />
             )}
+            {currentView === 'activity-history' && (
+              <ActivityHistoryPage onNavigate={setCurrentView} />
+            )}
             {currentView === 'audit' && (
               <AuditPage
                 initialRunId={selectedAuditRunId}
@@ -397,6 +402,9 @@ function App() {
             )}
             {currentView === 'judge-models' && (
               <JudgeModelsPage />
+            )}
+            {currentView === 'diagnostics' && (
+              <DiagnosticsPage />
             )}
           </MainLayout>
         </FluentProvider>

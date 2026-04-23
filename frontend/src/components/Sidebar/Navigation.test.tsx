@@ -82,6 +82,7 @@ describe("Navigation", () => {
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Audit Workbench" }));
+    expect(screen.getByText("Activity History")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Attack History"));
     expect(onNavigate).toHaveBeenCalledWith("history");
   });
@@ -122,6 +123,7 @@ describe("Navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Open Source Components")).toBeInTheDocument();
     expect(screen.getByText("External Engine Metadata")).toBeInTheDocument();
+    expect(screen.getByText("About / Diagnostics")).toBeInTheDocument();
     fireEvent.click(screen.getByText("External Engine Metadata"));
     expect(onNavigate).toHaveBeenCalledWith("external-engines");
   });

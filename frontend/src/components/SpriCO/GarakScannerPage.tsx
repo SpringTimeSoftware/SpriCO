@@ -590,7 +590,7 @@ export function ScanReport({
           {scan.failure_reason && <Metric label="Failure Reason" value={scan.failure_reason} />}
         </div>
         {effectiveVerdict(scan) === 'PASS' && !isNonEvaluatedScan(scan) && (
-          <div className="sprico-message">PASS for this scan run. No actionable findings for selected scope.</div>
+          <div className="sprico-message">PASS for selected scan scope. No actionable findings were created for the selected profile and categories.</div>
         )}
       </section>
 
@@ -628,8 +628,8 @@ export function ScanReport({
         <div className="sprico-kpis">
           <Metric label="Resolved Probes" value={String(reportNumber(scan, 'resolved_probes_count', probes.length))} />
           <Metric label="Skipped Probes" value={String(reportNumber(scan, 'skipped_probes_count', skippedProbes.length))} />
-          <Metric label="Detectors" value={String(detectors.length)} />
-          <Metric label="Buffs" value={String(buffs.length)} />
+          <Metric label="Detectors" value={String(reportNumber(scan, 'detectors_count', detectors.length))} />
+          <Metric label="Buffs" value={String(reportNumber(scan, 'buffs_count', buffs.length))} />
           <Metric label="Default Generations" value={valueText((scan as GarakScanReport).default_generations ?? profileResolution.default_generations ?? scanConfig(scan).max_attempts ?? scanConfig(scan).generations, 'not recorded')} />
           <Metric label="Timeout Seconds" value={valueText((scan as GarakScanReport).timeout_seconds ?? profileResolution.timeout_seconds ?? profileResolution.default_timeout_seconds ?? scanConfig(scan).timeout_seconds, 'not recorded')} />
         </div>
@@ -656,7 +656,7 @@ export function ScanReport({
           <Metric label="Findings Count" value={String(findingsCount(scan))} />
         </div>
         {!isNonEvaluatedScan(scan) && evidenceCount(scan) === 0 && (
-          <div className="sprico-message">No Evidence Center records were created because no actionable scanner evidence was produced.</div>
+          <div className="sprico-message">No actionable scanner evidence was produced. No Evidence Center records were created for this scan.</div>
         )}
         {!isNonEvaluatedScan(scan) && findingsCount(scan) === 0 && (
           <div className="sprico-message">No Findings were created because SpriCO did not identify an actionable issue in this scan.</div>
@@ -698,11 +698,11 @@ export function ScanReport({
       <ArtifactSummary scan={scan} />
 
       <Button className="sprico-advanced-toggle" appearance="secondary" onClick={onToggleRaw}>
-        {showRaw ? 'Hide Advanced Raw Evidence — for administrators and debugging.' : 'Show Advanced Raw Evidence — for administrators and debugging.'}
+        {showRaw ? 'Hide Advanced Raw Evidence - for administrators and debugging.' : 'Show Advanced Raw Evidence - for administrators and debugging.'}
       </Button>
       {showRaw && (
         <div className="sprico-advanced-panel" data-testid="advanced-raw-evidence-panel">
-          <FieldHelp>Advanced Raw Evidence — for administrators and debugging.</FieldHelp>
+          <FieldHelp>Advanced Raw Evidence - for administrators and debugging.</FieldHelp>
           <JsonView value={scan} />
         </div>
       )}
@@ -754,7 +754,7 @@ function SkippedCoverageList({ items }: { items: Array<{ name: string; reason: s
 }
 
 function ArtifactSummary({ scan }: { scan: GarakScanResult }) {
-  const rows = buildArtifactSummary(scan)
+  const rows = (scan as GarakScanReport).artifact_summary ?? buildArtifactSummary(scan)
   return (
     <div className="sprico-kpi">
       <div className="sprico-kpi-label">Artifact Summary</div>
@@ -1024,7 +1024,7 @@ function resultBanner(scan: GarakScanResult) {
   if (status === 'completed_no_findings') {
     return (
       <div className="sprico-message">
-        Scan completed with no actionable findings. This means no detector or SpriCO domain signal required intervention for the selected profile and categories. It does not prove the target is safe against all attacks.
+        Completed - no findings. PASS for selected scan scope. No actionable scanner evidence was produced. No Findings were created. This does not prove the target is safe against all attacks.
       </div>
     )
   }
@@ -1187,7 +1187,7 @@ function scanDuration(scan: GarakScanResult): string {
 
 function displayVerdict(scan: GarakScanResult): string {
   const verdict = effectiveVerdict(scan)
-  if (verdict === 'PASS') return 'PASS for this scan run'
+  if (verdict === 'PASS') return 'PASS for selected scan scope'
   return verdict
 }
 

@@ -6,6 +6,16 @@ from collections import Counter
 from datetime import datetime
 from typing import Any
 
+NON_EVALUATED_STATUSES = {
+    "timeout",
+    "failed",
+    "unavailable",
+    "incompatible_target",
+    "parsing_failed",
+    "validation_failed",
+    "not_evaluated",
+}
+
 
 def build_garak_scan_report(run: dict[str, Any], *, policy_names: dict[str, str] | None = None) -> dict[str, Any]:
     """Build a user-facing scanner run report from an existing run/result record."""
@@ -32,8 +42,12 @@ def build_garak_scan_report(run: dict[str, Any], *, policy_names: dict[str, str]
     findings_count = _int(run.get("findings_count"), fallback=len(findings))
     artifact_count = len(artifacts)
     status = _text(run.get("status"), "not_evaluated")
+    non_evaluated = _is_non_evaluated(status=status, evaluation_status=_text(run.get("evaluation_status")))
     risk = _text(run.get("risk") or sprico_final_verdict.get("violation_risk") or aggregate.get("worst_risk"))
     verdict = _text(run.get("final_verdict") or sprico_final_verdict.get("verdict") or aggregate.get("final_verdict"))
+    if non_evaluated:
+        verdict = "NOT_EVALUATED"
+        risk = "NOT_AVAILABLE"
 
     report = {
         "scan_id": scan_id,
@@ -69,6 +83,7 @@ def build_garak_scan_report(run: dict[str, Any], *, policy_names: dict[str, str]
         "evidence_count": evidence_count,
         "findings_count": findings_count,
         "artifact_count": artifact_count,
+        "artifact_summary": _artifact_summary(artifacts, completed=status.lower().startswith("completed")),
         "final_sprico_verdict": verdict,
         "final_verdict": verdict,
         "violation_risk": risk,
@@ -102,6 +117,13 @@ def summarize_garak_scan_reports(reports: list[dict[str, Any]]) -> dict[str, Any
     by_profile = Counter(_text(report.get("scan_profile"), "unknown") for report in reports)
     with_findings = sum(1 for report in reports if _int(report.get("findings_count")) > 0)
     no_findings = sum(1 for report in reports if _text(report.get("status")).lower() == "completed_no_findings")
+    timeout_count = by_status.get("timeout", 0)
+    failed_count = sum(by_status.get(status, 0) for status in ("failed", "unavailable", "incompatible_target", "parsing_failed", "validation_failed", "not_evaluated"))
+    findings_by_severity: Counter[str] = Counter()
+    for report in reports:
+        for item in _list(report.get("findings")):
+            if isinstance(item, dict):
+                findings_by_severity[_text(item.get("severity") or item.get("violation_risk") or item.get("risk"), "UNKNOWN")] += 1
     high_critical = sum(
         1
         for report in reports
@@ -115,7 +137,10 @@ def summarize_garak_scan_reports(reports: list[dict[str, Any]]) -> dict[str, Any
         "scanner_runs_by_profile": _counter_rows(by_profile, "profile"),
         "scanner_runs_with_findings": with_findings,
         "scanner_runs_with_no_findings": no_findings,
+        "scanner_runs_timeout": timeout_count,
+        "scanner_runs_failed": failed_count,
         "high_critical_scanner_findings": high_critical,
+        "scanner_findings_by_severity": _counter_rows(findings_by_severity, "severity"),
         "scanner_evidence_count": sum(_int(report.get("evidence_count")) for report in reports),
         "artifacts_stored": sum(_int(report.get("artifact_count")) for report in reports),
     }
@@ -159,6 +184,59 @@ def _skipped_details(profile_resolution: dict[str, Any], key: str) -> list[dict[
             if isinstance(maybe_items, list):
                 items.extend({"name": _text(item), "reason": "Reason not recorded."} for item in maybe_items)
     return [item for item in items if item["name"]]
+
+
+def _is_non_evaluated(*, status: str, evaluation_status: str) -> bool:
+    return evaluation_status.lower() == "not_evaluated" or status.lower() in NON_EVALUATED_STATUSES
+
+
+def _artifact_summary(artifacts: list[Any], *, completed: bool) -> list[dict[str, str]]:
+    typed = [artifact for artifact in artifacts if isinstance(artifact, dict)]
+    rows = [
+        ("command metadata", ("command_metadata", "command.json"), False),
+        ("scan config", ("scan_config", "config.json"), False),
+        ("stdout", ("stdout", "stdout.txt"), False),
+        ("stderr", ("stderr", "stderr.txt"), True),
+        ("exit code", ("exit_code", "exit_code.txt"), False),
+        ("report.jsonl", ("report", "report.jsonl", "garak_report"), False),
+        ("hitlog.jsonl", ("hitlog", "hitlog.jsonl"), False),
+        ("html report", ("html", ".html", ".htm"), False),
+    ]
+    summary: list[dict[str, str]] = []
+    for label, tokens, empty_allowed in rows:
+        artifact = _find_artifact(typed, tokens)
+        if artifact is None:
+            status = "not produced" if completed and label in {"report.jsonl", "hitlog.jsonl", "html report"} else "missing"
+            detail = ""
+        elif empty_allowed and _int(artifact.get("size"), fallback=0) == 0:
+            status = "empty"
+            detail = _artifact_detail(artifact)
+        else:
+            status = "saved"
+            detail = _artifact_detail(artifact)
+        summary.append({"label": label, "status": status, "detail": detail})
+    return summary
+
+
+def _find_artifact(artifacts: list[dict[str, Any]], tokens: tuple[str, ...]) -> dict[str, Any] | None:
+    for artifact in artifacts:
+        name = _text(artifact.get("name")).lower()
+        artifact_type = _text(artifact.get("artifact_type")).lower()
+        for token in tokens:
+            normalized = token.lower()
+            if artifact_type == normalized or name == normalized or normalized in name:
+                return artifact
+    return None
+
+
+def _artifact_detail(artifact: dict[str, Any]) -> str:
+    parts = [
+        _text(artifact.get("name")),
+        _text(artifact.get("artifact_type")),
+        f"{_int(artifact.get('size'), fallback=0)} bytes" if artifact.get("size") is not None else "",
+        _text(artifact.get("sha256"))[:16],
+    ]
+    return " | ".join(part for part in parts if part)
 
 
 def _duration_seconds(started_at: str, finished_at: str) -> int | None:

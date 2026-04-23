@@ -8,6 +8,7 @@ This document describes the Phase A grouped navigation result. SpriCO still uses
 | --- | --- | --- | --- | --- | --- |
 | Home | Home | `landing` | `frontend/src/components/Landing/LandingPage.tsx` | none | full static product entry page |
 | Audit Workbench | Interactive Audit | `chat` | `frontend/src/components/Chat/ChatWindow.tsx` | `/api/attacks`, `/api/audit/interactive/...`, `/api/targets/active` | full existing workflow |
+| Audit Workbench | Activity History | `activity-history` | `frontend/src/components/History/ActivityHistoryPage.tsx` | `/api/activity/history` | cross-workflow activity index |
 | Audit Workbench | Attack History | `history` | `frontend/src/components/History/AttackHistory.tsx` | `/api/attacks`, `/api/labels` | full existing workflow |
 | Audit Workbench | Audit Runs | `audit` | `frontend/src/components/Audit/AuditPage.tsx` | `/api/audit/run`, `/api/audit/runs`, `/api/audit/results/...` | full existing workflow |
 | Audit Workbench | Findings | `findings` | `frontend/src/components/Audit/AuditPage.tsx` | `/api/audit/findings/...` | full existing workflow |
@@ -31,6 +32,7 @@ This document describes the Phase A grouped navigation result. SpriCO still uses
 | Settings / Legal | Open Source Components | `open-source-components` | `frontend/src/components/SpriCO/OpenSourceComponentsPage.tsx` | `/api/legal/open-source-components` | functional legal registry page |
 | Settings | External Engine Metadata | `external-engines` | `frontend/src/components/SpriCO/ExternalEngineMetadataPage.tsx` | `/api/external-engines` | functional metadata UI |
 | Settings | Judge Models | `judge-models` | `frontend/src/components/SpriCO/JudgeModelsPage.tsx` | `/api/judge/status` | optional evidence-model configuration status |
+| Settings | About / Diagnostics | `diagnostics` | `frontend/src/components/SpriCO/DiagnosticsPage.tsx` | `/api/version`, `/api/storage/status`, `/api/garak/status` | build, backend, scanner, and storage verification |
 
 ## Shell Behavior
 

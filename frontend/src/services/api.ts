@@ -61,9 +61,11 @@ import type {
   RedObjective,
   RedScan,
   StorageStatus,
+  ActivityHistoryResponse,
+  VersionInfo,
 } from '../types'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+export const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -188,7 +190,7 @@ export const healthApi = {
 }
 
 export const versionApi = {
-  getVersion: async () => {
+  getVersion: async (): Promise<VersionInfo> => {
     const response = await apiClient.get('/version')
     return response.data
   },
@@ -349,6 +351,8 @@ function summarizeGarakReports(reports: GarakScanReport[]): GarakScannerReportSu
     scanner_runs_by_profile: counterRows(reports, report => asTrimmedString(report.scan_profile, 'unknown'), 'profile'),
     scanner_runs_with_findings: reports.filter(report => numberValue(report.findings_count) > 0).length,
     scanner_runs_with_no_findings: reports.filter(report => asTrimmedString(report.status).toLowerCase() === 'completed_no_findings').length,
+    scanner_runs_timeout: reports.filter(report => asTrimmedString(report.status).toLowerCase() === 'timeout').length,
+    scanner_runs_failed: reports.filter(report => ['failed', 'unavailable', 'incompatible_target', 'parsing_failed', 'validation_failed', 'not_evaluated'].includes(asTrimmedString(report.status).toLowerCase())).length,
     high_critical_scanner_findings: reports.filter(report => {
       const risk = asTrimmedString(report.violation_risk ?? report.risk).toUpperCase()
       if (risk === 'HIGH' || risk === 'CRITICAL') return true
@@ -358,6 +362,7 @@ function summarizeGarakReports(reports: GarakScanReport[]): GarakScannerReportSu
         return severity === 'HIGH' || severity === 'CRITICAL'
       })
     }).length,
+    scanner_findings_by_severity: severityCounterRows(reports.flatMap(report => (report.findings ?? []) as Array<Record<string, unknown>>)),
     scanner_evidence_count: reports.reduce((total, report) => total + numberValue(report.evidence_count), 0),
     artifacts_stored: reports.reduce((total, report) => total + numberValue(report.artifact_count ?? report.artifacts?.length), 0),
   }
@@ -385,6 +390,17 @@ function numberValue(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0
   }
   return 0
+}
+
+function severityCounterRows(findings: Array<Record<string, unknown>>): Array<{ severity: string; count: number }> {
+  const counts = new Map<string, number>()
+  findings.forEach(finding => {
+    const value = asTrimmedString(finding.severity ?? finding.violation_risk ?? finding.risk, 'UNKNOWN')
+    counts.set(value, (counts.get(value) ?? 0) + 1)
+  })
+  return Array.from(counts.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([severity, count]) => ({ severity, count }))
 }
 
 export const garakApi = {
@@ -526,6 +542,11 @@ export const spricoRedApi = {
     return response.data
   },
 
+  listScans: async (): Promise<RedScan[]> => {
+    const response = await apiClient.get('/red/scans')
+    return response.data
+  },
+
   createScan: async (request: {
     target_id: string
     objective_ids?: string[]
@@ -592,6 +613,13 @@ export const externalEnginesApi = {
 export const storageApi = {
   getStatus: async (): Promise<StorageStatus> => {
     const response = await apiClient.get('/storage/status')
+    return response.data
+  },
+}
+
+export const activityApi = {
+  getHistory: async (limit = 5): Promise<ActivityHistoryResponse> => {
+    const response = await apiClient.get('/activity/history', { params: { limit } })
     return response.data
   },
 }

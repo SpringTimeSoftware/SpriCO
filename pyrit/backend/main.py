@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 import pyrit
 from pyrit.backend.middleware import RequestIdMiddleware, register_error_handlers
-from pyrit.backend.routes import attacks, audit, conditions, converters, evidence, external_engines, garak, health, judge, labels, legal, media, policies, projects, pyrit_compatibility, red, scoring, shield, storage, targets, version
+from pyrit.backend.routes import activity, attacks, audit, conditions, converters, evidence, external_engines, garak, health, judge, labels, legal, media, policies, projects, pyrit_compatibility, red, scoring, shield, storage, targets, version
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.memory import CentralMemory, SQLiteMemory
 
@@ -75,6 +75,7 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(attacks.router, prefix="/api", tags=["attacks"])
+app.include_router(activity.router, prefix="/api", tags=["activity"])
 app.include_router(targets.router, prefix="/api", tags=["targets"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])
 app.include_router(conditions.router, prefix="/api", tags=["conditions"])

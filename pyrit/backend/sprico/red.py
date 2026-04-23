@@ -146,6 +146,9 @@ class SpriCORedStore:
     def get_scan(self, scan_id: str) -> dict[str, Any] | None:
         return self._backend.get_record("red_scans", scan_id)
 
+    def list_scans(self) -> list[dict[str, Any]]:
+        return self._backend.list_records("red_scans")
+
     def compare(self, scan_a: str, scan_b: str) -> dict[str, Any] | None:
         a = self.get_scan(scan_a)
         b = self.get_scan(scan_b)
