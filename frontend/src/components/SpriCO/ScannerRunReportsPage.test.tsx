@@ -103,7 +103,6 @@ describe('ScannerRunReportsPage', () => {
     expect(screen.getByText('Scanner Runs Total')).toBeInTheDocument()
     expect(screen.getAllByText('2').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Safe Hospital Target').length).toBeGreaterThan(0)
-    expect(screen.getByText('completed_no_findings')).toBeInTheDocument()
     expect(screen.getAllByText(/Completed - no findings/).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/No actionable scanner evidence was produced/).length).toBeGreaterThan(0)
     expect(screen.getByText(/No Findings were created because SpriCO did not identify an actionable issue/)).toBeInTheDocument()

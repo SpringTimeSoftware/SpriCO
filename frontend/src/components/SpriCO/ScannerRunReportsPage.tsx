@@ -117,7 +117,7 @@ export default function ScannerRunReportsPage({ onNavigate }: ScannerRunReportsP
                     <td>{valueText(report.target_name ?? report.target_id, 'not recorded')}</td>
                     <td>{valueText(report.scan_profile, 'not recorded')}</td>
                     <td>{report.vulnerability_categories?.length ?? 0}</td>
-                    <td><Badge value={report.status} /></td>
+                    <td><Badge value={reportStatusLabel(report)} /></td>
                     <td><Badge value={report.final_sprico_verdict ?? report.final_verdict} /></td>
                     <td><Badge value={report.violation_risk ?? report.risk} /></td>
                     <td>{report.evidence_count ?? 0}</td>
@@ -167,4 +167,11 @@ function Metric({ label, value }: { label: string; value: string }) {
 function reportPolicyContext(report: GarakScanReport): Record<string, unknown> {
   const value = report.config?.policy_context
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function reportStatusLabel(report: GarakScanReport): string {
+  const status = valueText(report.status).toLowerCase()
+  if (status === 'completed_no_findings') return 'Completed - no findings'
+  if (valueText(report.final_sprico_verdict).toUpperCase() === 'NOT_EVALUATED') return 'Not evaluated'
+  return valueText(report.status, 'unknown')
 }

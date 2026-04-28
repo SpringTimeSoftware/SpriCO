@@ -45,7 +45,7 @@ describe('DashboardPage scanner coverage', () => {
         { status: 'completed', count: 1 },
         { status: 'timeout', count: 1 },
       ],
-      scanner_runs_by_target: [],
+      scanner_runs_by_target: [{ target: 'Safe Hospital Target', count: 2 }],
       scanner_runs_by_profile: [{ profile: 'quick_baseline', count: 2 }],
       scanner_runs_with_findings: 1,
       scanner_runs_with_no_findings: 1,
@@ -64,8 +64,10 @@ describe('DashboardPage scanner coverage', () => {
     expect(screen.getByText('Completed No Findings')).toBeInTheDocument()
     expect(screen.getByText('Runs With Findings')).toBeInTheDocument()
     expect(screen.getByText('Scanner Runs By Status')).toBeInTheDocument()
+    expect(screen.getByText('Scanner Runs By Target')).toBeInTheDocument()
     expect(screen.getByText('completed_no_findings')).toBeInTheDocument()
     expect(screen.getByText('timeout')).toBeInTheDocument()
+    expect(screen.getByText('Safe Hospital Target')).toBeInTheDocument()
     expect(screen.getByText('quick_baseline')).toBeInTheDocument()
   })
 })

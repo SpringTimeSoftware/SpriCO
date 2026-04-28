@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { INTERACTIVE_AUDIT_COMPOSER_MAX_WIDTH_PX } from './chatLayout.constants'
 
 export const useChatInputAreaStyles = makeStyles({
   root: {
@@ -9,7 +10,8 @@ export const useChatInputAreaStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalM,
-    maxWidth: '900px',
+    width: '100%',
+    maxWidth: `${INTERACTIVE_AUDIT_COMPOSER_MAX_WIDTH_PX}px`,
     margin: '0 auto',
   },
   attachmentsContainer: {

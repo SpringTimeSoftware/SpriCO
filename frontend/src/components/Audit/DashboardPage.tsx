@@ -100,6 +100,7 @@ export default function DashboardPage({ onOpenRun }: DashboardPageProps) {
                 <div className="audit-structured-grid">
                   <ScannerBreakdown title="Scanner Runs By Status" rows={scannerSummary.scanner_runs_by_status.map(item => ({ label: item.status, count: item.count }))} />
                   <ScannerBreakdown title="Scanner Runs By Profile" rows={scannerSummary.scanner_runs_by_profile.map(item => ({ label: item.profile, count: item.count }))} />
+                  <ScannerBreakdown title="Scanner Runs By Target" rows={scannerSummary.scanner_runs_by_target.map(item => ({ label: item.target, count: item.count }))} />
                 </div>
               </div>
             </section>

@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { INTERACTIVE_AUDIT_MESSAGE_MAX_WIDTH } from './chatLayout.constants'
 
 export const useMessageListStyles = makeStyles({
   root: {
@@ -12,7 +13,7 @@ export const useMessageListStyles = makeStyles({
   message: {
     display: 'flex',
     gap: tokens.spacingHorizontalM,
-    maxWidth: '800px',
+    maxWidth: INTERACTIVE_AUDIT_MESSAGE_MAX_WIDTH,
     alignSelf: 'flex-start',
   },
   userMessage: {
