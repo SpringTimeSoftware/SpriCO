@@ -638,6 +638,12 @@ export default function AuditPage({ initialRunId, initialFilters, forcedWorkspac
       allow_text_target: false,
       execution_profile: buildExecutionProfile(),
     }
+    const exactSelectionRequest = {
+      ...baseRequest,
+      industries: [],
+      categories: [],
+      domains: [],
+    }
 
     switch (modeOverride) {
       case 'current_edit':
@@ -648,9 +654,7 @@ export default function AuditPage({ initialRunId, initialFilters, forcedWorkspac
           throw new Error('Current edited prompt runs require a non-empty prompt sequence.')
         }
         return {
-          ...baseRequest,
-          categories: [],
-          domains: [],
+          ...exactSelectionRequest,
           test_ids: [],
           variant_ids: [],
           prompt_source_mode: 'current_edit' as const,
@@ -660,9 +664,7 @@ export default function AuditPage({ initialRunId, initialFilters, forcedWorkspac
         }
       case 'selected_variant':
         return {
-          ...baseRequest,
-          categories: [],
-          domains: [],
+          ...exactSelectionRequest,
           test_ids: [],
           variant_ids: selectedVariantIds,
           prompt_source_mode: 'selected_variant' as const,
@@ -672,7 +674,7 @@ export default function AuditPage({ initialRunId, initialFilters, forcedWorkspac
         }
       case 'adversarial':
         return {
-          ...baseRequest,
+          ...exactSelectionRequest,
           test_ids: selectedBaseTestIds,
           variant_ids: [],
           prompt_source_mode: 'adversarial' as const,
@@ -682,7 +684,7 @@ export default function AuditPage({ initialRunId, initialFilters, forcedWorkspac
         }
       case 'both':
         return {
-          ...baseRequest,
+          ...exactSelectionRequest,
           test_ids: selectedBaseTestIds,
           variant_ids: [],
           prompt_source_mode: 'both' as const,
@@ -692,9 +694,7 @@ export default function AuditPage({ initialRunId, initialFilters, forcedWorkspac
         }
       case 'base_and_variant':
         return {
-          ...baseRequest,
-          categories: [],
-          domains: [],
+          ...exactSelectionRequest,
           test_ids: selectedBaseTestIds,
           variant_ids: selectedVariantIds,
           prompt_source_mode: 'base_and_variant' as const,
@@ -704,9 +704,7 @@ export default function AuditPage({ initialRunId, initialFilters, forcedWorkspac
         }
       case 'all_variants':
         return {
-          ...baseRequest,
-          categories: [],
-          domains: [],
+          ...exactSelectionRequest,
           test_ids: selectedBaseTestIds,
           variant_ids: [],
           prompt_source_mode: 'all_variants' as const,
@@ -717,7 +715,7 @@ export default function AuditPage({ initialRunId, initialFilters, forcedWorkspac
       case 'base':
       default:
         return {
-          ...baseRequest,
+          ...exactSelectionRequest,
           test_ids: selectedBaseTestIds,
           variant_ids: [],
           prompt_source_mode: 'base' as const,
@@ -1084,6 +1082,10 @@ export default function AuditPage({ initialRunId, initialFilters, forcedWorkspac
                             <div className="audit-message">Domain selector hidden: the imported workbook does not contain a native domain column.</div>
                           )}
 
+                          <div className="audit-message compact">
+                            Filters only control which workbook rows are visible. Execution runs only the checked workbook rows, selected saved variants, or the current editor prompt based on the chosen Prompt Variant Scope.
+                          </div>
+
                           <div className="audit-table-wrap audit-table-scroll audit-table-wrap-stretch">
                             <table className="audit-table">
                               <thead>
@@ -1329,8 +1331,9 @@ export default function AuditPage({ initialRunId, initialFilters, forcedWorkspac
                     <div className="audit-config-row"><span>Target Validation</span><span>Endpoint + model required</span></div>
                   </div>
                   <div className="audit-run-summary">
-                    <strong>{selectedExecutionCount}</strong> selected logical items, <strong>{effectiveExecutionCount * Math.max(selectedTargets.length, 1)}</strong> physical run(s) across <strong>{selectedTargetInfos.length || 0}</strong> target(s)
+                    <strong>{selectedExecutionCount}</strong> checked execution item(s), <strong>{effectiveExecutionCount * Math.max(selectedTargets.length, 1)}</strong> physical run(s) across <strong>{selectedTargetInfos.length || 0}</strong> target(s)
                   </div>
+                  <div className="audit-note">Audit Workstation executes the exact checked scope only. Unchecked visible rows are never expanded into a run.</div>
                   <button
                     className="audit-primary-btn"
                     type="button"

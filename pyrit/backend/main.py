@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 import pyrit
 from pyrit.backend.middleware import RequestIdMiddleware, register_error_handlers
-from pyrit.backend.routes import activity, attacks, audit, conditions, converters, evidence, external_engines, garak, health, judge, labels, legal, media, policies, projects, pyrit_compatibility, red, scoring, shield, storage, targets, version
+from pyrit.backend.routes import activity, attacks, audit, conditions, converters, evidence, external_engines, findings, garak, health, judge, labels, legal, media, policies, projects, promptfoo, pyrit_compatibility, red, runs, scoring, shield, storage, targets, version
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.memory import CentralMemory, SQLiteMemory
 
@@ -86,6 +86,7 @@ app.include_router(scoring.router, prefix="/api", tags=["scoring"])
 app.include_router(audit.router, prefix="/api", tags=["audit"])
 app.include_router(pyrit_compatibility.router, prefix="/api", tags=["pyrit"])
 app.include_router(garak.router, prefix="/api", tags=["garak"])
+app.include_router(promptfoo.router, prefix="/api", tags=["promptfoo"])
 app.include_router(judge.router, prefix="/api", tags=["judge"])
 app.include_router(external_engines.router, prefix="/api", tags=["external-engines"])
 app.include_router(legal.router, prefix="/api", tags=["legal"])
@@ -94,6 +95,8 @@ app.include_router(policies.router, prefix="/api", tags=["policies"])
 app.include_router(shield.router, prefix="/api", tags=["shield"])
 app.include_router(red.router, prefix="/api", tags=["red"])
 app.include_router(evidence.router, prefix="/api", tags=["evidence"])
+app.include_router(findings.router, prefix="/api", tags=["findings"])
+app.include_router(runs.router, prefix="/api", tags=["runs"])
 app.include_router(storage.router, prefix="/api", tags=["storage"])
 app.include_router(version.router, tags=["version"])
 

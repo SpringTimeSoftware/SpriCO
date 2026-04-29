@@ -49,9 +49,11 @@ def _sprico_counts(backend: Any) -> dict[str, int]:
     aliases = {
         "garak_runs": "scanner_runs",
         "red_scans": "red_scans",
+        "promptfoo_runs": "promptfoo_runs",
         "shield_events": "shield_events",
         "evidence_items": "evidence",
         "findings": "findings",
+        "runs": "runs",
         "policies": "policies",
         "projects": "projects",
         "custom_conditions": "conditions",
@@ -59,9 +61,11 @@ def _sprico_counts(backend: Any) -> dict[str, int]:
     counts: dict[str, int] = {
         "scanner_runs": 0,
         "red_scans": 0,
+        "promptfoo_runs": 0,
         "shield_events": 0,
         "evidence": 0,
         "findings": 0,
+        "runs": 0,
         "policies": 0,
         "projects": 0,
         "conditions": 0,

@@ -111,6 +111,7 @@ const FRIENDLY_SOURCE_LABELS: Record<string, string> = {
   openai_judge: 'Optional Judge Evidence',
   deepteam_metric: 'DeepTeam Metadata Evidence',
   promptfoo_assertion: 'promptfoo Assertion Evidence',
+  promptfoo_runtime: 'promptfoo Runtime',
   interactive_audit: 'Interactive Audit',
   llm_scanner: 'LLM Vulnerability Scanner',
   red_campaign: 'Red Team Campaigns',

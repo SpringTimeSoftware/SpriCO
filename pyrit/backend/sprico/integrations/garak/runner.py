@@ -20,6 +20,8 @@ from pyrit.backend.sprico.integrations.garak.parser import parse_artifacts
 from pyrit.backend.sprico.integrations.garak.profiles import resolve_scan_profile
 from pyrit.backend.sprico.integrations.garak.version import get_garak_version_info
 from pyrit.backend.sprico.evidence_store import SpriCOEvidenceStore
+from pyrit.backend.sprico.findings import SpriCOFindingStore, finding_requires_action
+from pyrit.backend.sprico.runs import SpriCORunRegistry
 from pyrit.backend.sprico.storage import StorageBackend, get_storage_backend
 from pyrit.common.path import DB_DATA_PATH
 from scoring.policy_context import build_policy_context
@@ -41,6 +43,12 @@ class GarakScanRunner:
         self._policy_engine = PolicyDecisionEngine()
         self._backend = backend or get_storage_backend()
         self._evidence_store = SpriCOEvidenceStore(backend=self._backend)
+        self._finding_store = SpriCOFindingStore(backend=self._backend, evidence_store=self._evidence_store)
+        self._run_registry = SpriCORunRegistry(
+            backend=self._backend,
+            evidence_store=self._evidence_store,
+            finding_store=self._finding_store,
+        )
 
     def run(self, config: GarakScanConfig | dict[str, Any]) -> dict[str, Any]:
         started_at = _utc_now()
@@ -219,11 +227,13 @@ class GarakScanRunner:
         return _artifact_refs(scan_dir)
 
     def _persist_run(self, *, scan_config: GarakScanConfig, result: dict[str, Any]) -> None:
+        unified_run_id = f"garak_scan:{scan_config.scan_id}"
         self._backend.upsert_record(
             "garak_runs",
             scan_config.scan_id,
             {
                 "id": scan_config.scan_id,
+                "run_id": unified_run_id,
                 "scan_id": scan_config.scan_id,
                 "target_id": scan_config.target_id,
                 "target_name": result.get("target_name"),
@@ -252,6 +262,7 @@ class GarakScanRunner:
             scan_config.scan_id,
             {
                 "id": scan_config.scan_id,
+                "run_id": unified_run_id,
                 "scan_id": scan_config.scan_id,
                 "scan_type": "llm_vulnerability_scanner",
                 "engine": "garak",
@@ -292,6 +303,10 @@ class GarakScanRunner:
             evidence_signals = _signals_for_evidence(result.get("signals") or [], evidence)
             self._evidence_store.append_event(
                 {
+                    "evidence_id": evidence_id,
+                    "run_id": unified_run_id,
+                    "run_type": "garak_scan",
+                    "source_page": "garak-scanner",
                     "finding_id": evidence_id,
                     "engine": "garak",
                     "engine_id": "garak",
@@ -307,8 +322,11 @@ class GarakScanRunner:
                     "target_type": result.get("target_type"),
                     "scan_id": scan_config.scan_id,
                     "policy_id": result.get("policy_id"),
+                    "policy_name": self._policy_name(result.get("policy_id")),
                     "policy_context": scan_config.policy_context,
                     "evidence_type": "scanner_evidence",
+                    "raw_input": evidence.get("prompt") or evidence.get("input"),
+                    "raw_output": evidence.get("response") or evidence.get("output"),
                     "raw_result": evidence,
                     "scanner_result": evidence.get("scanner_result") or {},
                     "artifact_refs": evidence.get("artifact_refs") or [],
@@ -324,7 +342,33 @@ class GarakScanRunner:
             )
         for finding in result.get("findings") or []:
             finding_id = str(finding.get("finding_id") or f"garak_finding_{scan_config.scan_id}_{uuid.uuid4().hex[:8]}")
-            self._backend.upsert_record("findings", finding_id, {"id": finding_id, **finding})
+            self._finding_store.upsert_finding(
+                {
+                    "id": finding_id,
+                    "finding_id": finding_id,
+                    **finding,
+                    "run_id": unified_run_id,
+                    "run_type": "garak_scan",
+                    "source_page": "garak-scanner",
+                    "engine_id": "garak",
+                    "engine_name": "garak LLM Scanner",
+                    "policy_name": self._policy_name(result.get("policy_id")),
+                    "status": "open",
+                    "review_status": "pending",
+                    "title": "garak actionable scanner finding",
+                    "description": finding.get("summary"),
+                    "legacy_source_ref": {"collection": "garak_runs", "id": scan_config.scan_id, "scan_id": scan_config.scan_id},
+                }
+            )
+        stored_run = self._backend.get_record("garak_runs", scan_config.scan_id) or {"id": scan_config.scan_id, **result}
+        self._run_registry.record_garak_run(stored_run)
+
+    def _policy_name(self, policy_id: Any) -> str | None:
+        policy_key = str(policy_id or "").strip()
+        if not policy_key:
+            return None
+        policy = self._backend.get_record("policies", policy_key)
+        return str(policy.get("name")) if isinstance(policy, dict) and policy.get("name") else None
 
     def _build_command(self, *, scan_config: GarakScanConfig, scan_dir: Path) -> list[str]:
         help_text = _garak_help()
@@ -691,11 +735,11 @@ def _actionable_findings(
     final_verdict: dict[str, Any],
     signals: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    verdict = str(final_verdict.get("verdict") or "").upper()
-    risk = str(final_verdict.get("violation_risk") or "").upper()
-    sensitivity = str(final_verdict.get("data_sensitivity") or "").upper()
-    actionable = verdict == "FAIL" or risk in {"HIGH", "CRITICAL"} or (
-        verdict == "NEEDS_REVIEW" and sensitivity in {"HIGH", "CRITICAL"}
+    actionable = finding_requires_action(
+        final_verdict=final_verdict.get("verdict"),
+        violation_risk=final_verdict.get("violation_risk"),
+        data_sensitivity=final_verdict.get("data_sensitivity"),
+        policy_context=scan_config.policy_context,
     )
     if not actionable:
         return []
@@ -703,18 +747,26 @@ def _actionable_findings(
     findings: list[dict[str, Any]] = []
     for index, evidence in enumerate(scanner_evidence or [{}], start=1):
         finding_id = f"garak_finding_{scan_config.scan_id}_{index}"
+        risk = str(final_verdict.get("violation_risk") or "").upper()
+        sensitivity = str(final_verdict.get("data_sensitivity") or "").upper()
         findings.append(
             {
                 "finding_id": finding_id,
                 "id": finding_id,
+                "run_id": f"garak_scan:{scan_config.scan_id}",
+                "run_type": "garak_scan",
                 "scan_id": scan_config.scan_id,
                 "target_id": scan_config.target_id,
                 "target_name": scan_config.target_name or scan_config.policy_context.get("target_name") or scan_config.target_id,
                 "target_type": scan_config.target_type or scan_config.policy_context.get("target_type"),
                 "policy_id": scan_config.policy_id or scan_config.policy_context.get("policy_id"),
+                "evidence_ids": [evidence.get("evidence_id")] if evidence.get("evidence_id") else [],
                 "evidence_id": evidence.get("evidence_id"),
                 "artifact_refs": evidence.get("artifact_refs") or [],
                 "source": "garak LLM Scanner",
+                "source_page": "garak-scanner",
+                "engine_id": "garak",
+                "engine_name": "garak LLM Scanner",
                 "source_type": "scanner_evidence",
                 "final_sprico_verdict": final_verdict,
                 "severity": risk or "MEDIUM",

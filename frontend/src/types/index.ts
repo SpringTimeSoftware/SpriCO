@@ -407,6 +407,8 @@ export interface CreateAuditRunRequest {
   transient_expected_behavior?: string | null
   selected_test_id_for_transient_run?: number | null
   target_registry_name: string
+  policy_id?: string | null
+  run_source?: string | null
   allow_text_target?: boolean
   execution_profile?: AuditExecutionProfileRequest
 }
@@ -454,6 +456,14 @@ export interface AuditResultRow {
   prompt_source_type?: string | null
   prompt_source_label?: string | null
   prompt_variant?: string | null
+  run_source?: string | null
+  policy_id?: string | null
+  policy_name?: string | null
+  suite_id?: string | null
+  suite_test_id?: string | null
+  suite_name?: string | null
+  assertion_results?: Array<Record<string, unknown>>
+  assertion_summary?: string | null
   transient_prompt_used?: boolean | null
   execution_scope_label?: string | null
   variant_group_key?: string | null
@@ -527,6 +537,15 @@ export interface AuditRun {
   model_name?: string | null
   endpoint?: string | null
   supports_multi_turn: boolean
+  run_source?: string | null
+  policy_id?: string | null
+  policy_name?: string | null
+  suite_id?: string | null
+  suite_name?: string | null
+  comparison_group_id?: string | null
+  comparison_label?: string | null
+  comparison_mode?: string | null
+  run_metadata?: Record<string, unknown>
   status: string
   selected_industries: string[]
   selected_categories: string[]
@@ -545,6 +564,131 @@ export interface AuditRun {
   updated_at: string
   error_message?: string | null
   results: AuditResultRow[]
+}
+
+export interface AuditSpecSuite {
+  suite_id: string
+  name: string
+  description?: string | null
+  domain: string
+  policy_id?: string | null
+  target_ids: string[]
+  tags: string[]
+  assertions: Array<Record<string, unknown>>
+  severity: string
+  expected_behavior?: string | null
+  metadata: Record<string, unknown>
+  tests: Array<Record<string, unknown>>
+  format?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  test_count?: number | null
+}
+
+export interface AuditSpecValidateResponse {
+  format: string
+  suite: AuditSpecSuite
+}
+
+export interface AuditSpecRunRequest {
+  suite_id: string
+  comparison_mode: 'single_target' | 'multi_target_comparison' | 'prompt_version_comparison' | 'policy_version_comparison' | 'baseline_candidate'
+  candidate_suite_id?: string | null
+  target_ids: string[]
+  policy_ids: string[]
+  baseline_label?: string | null
+  candidate_label?: string | null
+  execution_profile?: AuditExecutionProfileRequest
+}
+
+export interface AuditSpecRunLaunchResponse {
+  comparison_group_id: string
+  comparison_mode: string
+  runs: AuditRun[]
+}
+
+export interface PromptfooStatus {
+  available: boolean
+  version?: string | null
+  node_version?: string | null
+  install_hint?: string | null
+  supported_modes: string[]
+  final_verdict_capable: boolean
+  error?: string | null
+  advanced?: {
+    executable_path?: string | null
+    command?: string[] | null
+    python_executable?: string | null
+    node_version?: string | null
+    stdout?: string | null
+    stderr?: string | null
+    returncode?: number | null
+  }
+}
+
+export interface PromptfooPluginOption {
+  id: string
+  label: string
+  default_selected?: boolean
+}
+
+export interface PromptfooPluginGroup {
+  id: string
+  label: string
+  description: string
+  plugins: PromptfooPluginOption[]
+}
+
+export interface PromptfooStrategyOption {
+  id: string
+  label: string
+  description: string
+  cost: string
+  recommended: boolean
+  default_selected?: boolean
+}
+
+export interface PromptfooCatalog {
+  plugin_groups: PromptfooPluginGroup[]
+  strategies: PromptfooStrategyOption[]
+  supported_modes: string[]
+  final_verdict_capable: boolean
+  promptfoo_is_optional: boolean
+}
+
+export interface PromptfooRuntimeRequest {
+  target_ids: string[]
+  policy_ids: string[]
+  domain: string
+  plugin_group_id: string
+  plugin_ids: string[]
+  strategy_ids: string[]
+  suite_id?: string | null
+  purpose?: string | null
+  num_tests_per_plugin: number
+  max_concurrency: number
+  use_remote_generation?: boolean
+}
+
+export interface PromptfooRuntimeLaunchRun {
+  scan_id: string
+  run_id: string
+  target_id: string
+  target_name: string
+  policy_id: string
+  policy_name?: string | null
+  suite_id?: string | null
+  suite_name?: string | null
+  comparison_group_id: string
+  comparison_mode: string
+  comparison_label: string
+  status: string
+}
+
+export interface PromptfooRuntimeLaunchResponse {
+  comparison_group_id: string
+  comparison_mode: string
+  runs: PromptfooRuntimeLaunchRun[]
 }
 
 export interface AuditDashboardTotals {
@@ -1029,6 +1173,7 @@ export interface JudgeStatus {
 
 export interface GarakScanResult {
   scan_id: string
+  run_id?: string | null
   status: string
   target_id?: string | null
   target_name?: string | null
@@ -1151,6 +1296,99 @@ export interface ActivityHistoryResponse {
   categories: ActivityHistoryCategory[]
 }
 
+export interface SpriCORunRecord {
+  id: string
+  run_id: string
+  run_type: string
+  source_page: string
+  target_id?: string | null
+  target_name?: string | null
+  target_type?: string | null
+  domain?: string | null
+  policy_id?: string | null
+  policy_name?: string | null
+  engine_id?: string | null
+  engine_name?: string | null
+  engine_version?: string | null
+  status?: string | null
+  evaluation_status?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  duration_seconds?: number | null
+  evidence_count: number
+  findings_count: number
+  final_verdict?: string | null
+  violation_risk?: string | null
+  coverage_summary: Record<string, unknown>
+  artifact_count: number
+  created_by?: string | null
+  metadata: Record<string, unknown>
+  legacy_source_ref: Record<string, unknown>
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface SpriCORunSummaryBucket {
+  label: string
+  count: number
+}
+
+export interface SpriCORunSummary {
+  generated_at: string
+  total_runs: number
+  by_run_type: SpriCORunSummaryBucket[]
+  by_source_page: SpriCORunSummaryBucket[]
+  by_status: SpriCORunSummaryBucket[]
+  by_final_verdict: SpriCORunSummaryBucket[]
+  coverage: {
+    no_finding_runs: number
+    runs_with_findings: number
+    not_evaluated_runs: number
+    evidence_total: number
+    findings_total: number
+    artifact_total: number
+    targets_covered: number
+  }
+  recent_runs: SpriCORunRecord[]
+}
+
+export interface SpriCOFinding {
+  id: string
+  finding_id: string
+  run_id?: string | null
+  run_type?: string | null
+  evidence_ids: string[]
+  target_id?: string | null
+  target_name?: string | null
+  target_type?: string | null
+  source_page: string
+  engine_id?: string | null
+  engine_name?: string | null
+  domain?: string | null
+  policy_id?: string | null
+  policy_name?: string | null
+  category?: string | null
+  severity: string
+  status: string
+  title: string
+  description: string
+  root_cause?: string | null
+  remediation?: string | null
+  owner?: string | null
+  review_status: string
+  created_at: string
+  updated_at: string
+  final_verdict?: string | null
+  violation_risk?: string | null
+  data_sensitivity?: string | null
+  matched_signals: Array<Record<string, unknown>>
+  policy_context: Record<string, unknown>
+  prompt_excerpt?: string | null
+  response_excerpt?: string | null
+  legacy_source_ref: Record<string, unknown>
+  [key: string]: unknown
+}
+
 export interface ShieldCheckRequest {
   messages: Array<{ role: string; content: string }>
   project_id?: string | null
@@ -1208,9 +1446,14 @@ export interface SpriCOPolicy {
 }
 
 export interface SpriCOEvidenceItem {
+  id?: string
+  evidence_id?: string
   finding_id: string
   created_at: string
   timestamp?: string | null
+  run_id?: string | null
+  run_type?: string | null
+  source_page?: string | null
   engine: string
   engine_id?: string | null
   engine_name?: string | null
@@ -1230,14 +1473,23 @@ export interface SpriCOEvidenceItem {
   evidence_type?: string | null
   project_id?: string | null
   policy_id?: string | null
+  policy_name?: string | null
   policy_context: Record<string, unknown>
+  authorization_context?: Record<string, unknown>
+  raw_input?: string | null
+  raw_output?: string | null
+  retrieved_context?: Array<Record<string, unknown>>
+  tool_calls?: Array<Record<string, unknown>>
   raw_result?: Record<string, unknown>
   raw_engine_result: Record<string, unknown>
   scanner_result?: Record<string, unknown> | null
   artifact_refs?: Array<Record<string, unknown> | string>
+  scanner_artifact_refs?: Array<Record<string, unknown> | string>
+  assertion_results?: Array<Record<string, unknown>>
   normalized_signal?: Array<Record<string, unknown>>
   normalized_signals?: Array<Record<string, unknown>>
   matched_signals: Array<Record<string, unknown>>
+  matched_conditions?: string[]
   final_verdict?: string | null
   violation_risk?: string | null
   data_sensitivity?: string | null
@@ -1245,6 +1497,7 @@ export interface SpriCOEvidenceItem {
   reviewer_override?: string | null
   redaction_status?: string | null
   hash?: string | null
+  linked_finding_ids?: string[]
 }
 
 export interface RedObjective {
@@ -1262,6 +1515,7 @@ export interface RedObjective {
 
 export interface RedScan {
   id: string
+  run_id?: string | null
   target_id?: string | null
   recon_context: Record<string, unknown>
   objective_ids: string[]

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from pyrit.backend.sprico.integrations.garak.version import get_garak_version_info
+from pyrit.backend.sprico.integrations.promptfoo.discovery import get_promptfoo_status
 from pyrit.backend.sprico.judge import get_judge_status
 
 
@@ -52,7 +53,7 @@ LEGAL_COMPONENTS: dict[str, LegalComponent] = {
         license_id="MIT",
         license_name="MIT License",
         upstream_url="https://github.com/promptfoo/promptfoo",
-        local_use="Optional assertion/import/export compatibility metadata. Native SpriCO AuditSpec remains preferred.",
+        local_use="Optional runtime and assertion evidence adapter. promptfoo evidence never overrides SpriCO's final verdict.",
         license_file="third_party/promptfoo/LICENSE.txt",
         source_file="third_party/promptfoo/SOURCE.txt",
         version_file="third_party/promptfoo/VERSION.txt",
@@ -125,6 +126,7 @@ def read_component_file(component_id: str, file_kind: str) -> str | None:
 
 def external_engine_matrix() -> dict[str, Any]:
     garak_status = get_garak_version_info()
+    promptfoo_status = get_promptfoo_status()
     judge_status = get_judge_status()
     legal = {component_id: _component_payload(component) for component_id, component in LEGAL_COMPONENTS.items()}
     return {
@@ -145,12 +147,13 @@ def external_engine_matrix() -> dict[str, Any]:
             _engine("deepteam", "DeepTeam", "attack", False, "deepteam", metadata_only=True, can_generate_attacks=True),
             _engine(
                 "promptfoo_import_or_assertions",
-                "promptfoo import/assertions",
+                "promptfoo runtime/assertions",
                 "attack",
-                False,
+                bool(promptfoo_status.get("available")),
                 "promptfoo",
-                metadata_only=True,
                 can_generate_attacks=True,
+                installed_version=promptfoo_status.get("version"),
+                install_hint=promptfoo_status.get("install_hint"),
             ),
         ],
         "evidence_engines": [
@@ -166,7 +169,16 @@ def external_engine_matrix() -> dict[str, Any]:
                 install_hint=garak_status.get("install_hint"),
             ),
             _engine("deepteam_metric", "DeepTeam metric evidence", "evidence", False, "deepteam", metadata_only=True, can_generate_evidence=True),
-            _engine("promptfoo_assertion", "promptfoo assertion evidence", "evidence", False, "promptfoo", metadata_only=True, can_generate_evidence=True),
+            _engine(
+                "promptfoo_assertion",
+                "promptfoo assertion evidence",
+                "evidence",
+                bool(promptfoo_status.get("available")),
+                "promptfoo",
+                can_generate_evidence=True,
+                installed_version=promptfoo_status.get("version"),
+                install_hint=promptfoo_status.get("install_hint"),
+            ),
             _engine("pyrit_scorer", "PyRIT scorer evidence", "evidence", True, None, can_generate_evidence=True),
             _engine(
                 "openai_judge",
@@ -188,6 +200,7 @@ def external_engine_matrix() -> dict[str, Any]:
             "reason": "Regulated domains require SpriCO policy context, authorization, purpose, scope, and minimum-necessary checks.",
         },
         "garak_status": garak_status,
+        "promptfoo_status": promptfoo_status,
         "legal_components": legal,
     }
 

@@ -24,6 +24,7 @@ import ShieldPage from './components/SpriCO/ShieldPage'
 import PolicyPage from './components/SpriCO/PolicyPage'
 import RedPage from './components/SpriCO/RedPage'
 import EvidencePage from './components/SpriCO/EvidencePage'
+import FindingsPage from './components/SpriCO/FindingsPage'
 import CustomConditionsPage from './components/SpriCO/CustomConditionsPage'
 import OpenSourceComponentsPage from './components/SpriCO/OpenSourceComponentsPage'
 import ExternalEngineMetadataPage from './components/SpriCO/ExternalEngineMetadataPage'
@@ -291,10 +292,9 @@ function App() {
               />
             )}
             {currentView === 'findings' && (
-              <AuditPage
+              <FindingsPage
                 initialRunId={selectedAuditRunId}
-                initialFilters={selectedAuditFilters}
-                forcedWorkspaceView="findings"
+                onNavigate={setCurrentView}
                 backLink={selectedAuditOrigin ? {
                   label: selectedAuditOrigin === 'chat'
                     ? 'Back To Interactive Audit'
@@ -309,10 +309,6 @@ function App() {
                           : 'Back To Audit Workstation',
                   onClick: () => setCurrentView(selectedAuditOrigin),
                 } : undefined}
-                onRunOpened={() => {
-                  setSelectedAuditRunId(null)
-                  setSelectedAuditFilters(null)
-                }}
               />
             )}
             {currentView === 'dashboard' && (
@@ -368,6 +364,7 @@ function App() {
                   setSelectedAuditOrigin('benchmark-library')
                   setCurrentView('findings')
                 }}
+                onNavigate={setCurrentView}
               />
             )}
             {currentView === 'target-help' && (
@@ -389,7 +386,7 @@ function App() {
               <RedPage />
             )}
             {currentView === 'evidence' && (
-              <EvidencePage />
+              <EvidencePage onNavigate={setCurrentView} />
             )}
             {currentView === 'conditions' && (
               <CustomConditionsPage />

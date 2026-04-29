@@ -5,15 +5,19 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
+import yaml
 
+from audit.auditspec import AuditSpecValidationError, parse_auditspec_content
 from audit.benchmark_importer import parse_flipattack_artifact
 from audit.database import AuditDatabase
 from audit.executor import AuditExecutor
@@ -24,6 +28,9 @@ from audit.stability import aggregate_runs
 from pyrit.backend.services.attack_service import get_attack_service
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.backend.sprico.evidence_store import SpriCOEvidenceStore
+from pyrit.backend.sprico.findings import SpriCOFindingStore, finding_requires_action
+from pyrit.backend.sprico.policy_store import SpriCOPolicyStore
+from pyrit.backend.sprico.runs import SpriCORunRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +38,9 @@ router = APIRouter(tags=["audit"])
 repository = AuditDatabase()
 repository.initialize()
 _interactive_evidence_store = SpriCOEvidenceStore()
+_finding_store = SpriCOFindingStore(evidence_store=_interactive_evidence_store)
+_run_registry = SpriCORunRegistry(evidence_store=_interactive_evidence_store, finding_store=_finding_store)
+_policy_store = SpriCOPolicyStore()
 
 
 class AuditOption(BaseModel):
@@ -138,6 +148,8 @@ class CreateAuditRunRequest(BaseModel):
     transient_expected_behavior: Optional[str] = None
     selected_test_id_for_transient_run: Optional[int] = None
     target_registry_name: str
+    policy_id: Optional[str] = None
+    run_source: Optional[str] = "audit_workstation"
     allow_text_target: bool = False
     execution_profile: Optional[AuditExecutionProfileRequest] = None
 
@@ -152,6 +164,14 @@ class AuditResultRow(BaseModel):
     prompt_source_type: Optional[str] = None
     prompt_source_label: Optional[str] = None
     prompt_variant: Optional[str] = None
+    run_source: Optional[str] = None
+    policy_id: Optional[str] = None
+    policy_name: Optional[str] = None
+    suite_id: Optional[str] = None
+    suite_test_id: Optional[str] = None
+    suite_name: Optional[str] = None
+    assertion_results: list[dict[str, Any]] = Field(default_factory=list)
+    assertion_summary: Optional[str] = None
     transient_prompt_used: bool = False
     execution_scope_label: Optional[str] = None
     variant_group_key: Optional[str] = None
@@ -225,6 +245,15 @@ class AuditRunResponse(BaseModel):
     model_name: Optional[str] = None
     endpoint: Optional[str] = None
     supports_multi_turn: bool
+    run_source: str = "audit_workstation"
+    policy_id: Optional[str] = None
+    policy_name: Optional[str] = None
+    suite_id: Optional[str] = None
+    suite_name: Optional[str] = None
+    comparison_group_id: Optional[str] = None
+    comparison_label: Optional[str] = None
+    comparison_mode: Optional[str] = None
+    run_metadata: dict[str, Any] = Field(default_factory=dict)
     status: str
     selected_industries: list[str]
     selected_categories: list[str]
@@ -729,6 +758,51 @@ class BenchmarkLibraryResponse(BaseModel):
     taxonomy: list[BenchmarkTaxonomyRow]
 
 
+class AuditSpecSuiteResponse(BaseModel):
+    suite_id: str
+    name: str
+    description: Optional[str] = None
+    domain: str
+    policy_id: Optional[str] = None
+    target_ids: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    assertions: list[dict[str, Any]] = Field(default_factory=list)
+    severity: str = "MEDIUM"
+    expected_behavior: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    tests: list[dict[str, Any]] = Field(default_factory=list)
+    format: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    test_count: Optional[int] = None
+
+
+class AuditSpecImportRequest(BaseModel):
+    content: str
+
+
+class AuditSpecValidateResponse(BaseModel):
+    format: str
+    suite: AuditSpecSuiteResponse
+
+
+class AuditSpecRunRequest(BaseModel):
+    suite_id: str
+    comparison_mode: str = "single_target"
+    candidate_suite_id: Optional[str] = None
+    target_ids: list[str] = Field(default_factory=list)
+    policy_ids: list[str] = Field(default_factory=list)
+    baseline_label: Optional[str] = None
+    candidate_label: Optional[str] = None
+    execution_profile: Optional[AuditExecutionProfileRequest] = None
+
+
+class AuditSpecRunLaunchResponse(BaseModel):
+    comparison_group_id: str
+    comparison_mode: str
+    runs: list[AuditRunResponse]
+
+
 def _serialize_run(run: dict[str, Any], *, include_results: bool) -> dict[str, Any]:
     total_tests = int(run.get("total_tests") or 0)
     completed_tests = int(run.get("completed_tests") or 0)
@@ -1178,6 +1252,7 @@ def _persist_interactive_audit_turn_evidence(
     grounding_assessment: dict[str, Any],
 ) -> str:
     evidence_id = f"interactive_audit:{conversation_id}:{assistant_turn_number}:{scoring_version}"
+    unified_run_id = f"interactive_audit:{conversation_id}"
     policy_context = dict((grounding_assessment or {}).get("policy_context") or {})
     if not policy_context:
         policy_context = {
@@ -1232,6 +1307,10 @@ def _persist_interactive_audit_turn_evidence(
     }
     stored = _interactive_evidence_store.append_event(
         {
+            "evidence_id": evidence_id,
+            "run_id": unified_run_id,
+            "run_type": "interactive_audit",
+            "source_page": "chat",
             "finding_id": evidence_id,
             "evidence_type": "interactive_audit_turn",
             "engine": "sprico_interactive_audit",
@@ -1241,12 +1320,21 @@ def _persist_interactive_audit_turn_evidence(
             "engine_version": scoring_version,
             "target_id": target_registry_name,
             "target_name": target_registry_name,
+            "target_type": target_type,
             "scan_id": conversation_id,
             "session_id": attack_result_id,
             "conversation_id": conversation_id,
             "turn_id": str(assistant_turn_number),
             "policy_id": policy_context.get("policy_id"),
+            "policy_name": _policy_name(policy_context.get("policy_id")),
             "policy_context": policy_context,
+            "authorization_context": {
+                "policy_mode": sprico_final_verdict["policy_mode"],
+                "access_context": sprico_final_verdict["access_context"],
+                "authorization_source": sprico_final_verdict["authorization_source"],
+            },
+            "raw_input": latest_user_prompt or prompt_sequence,
+            "raw_output": response_text,
             "raw_result": raw_result,
             "normalized_signal": evaluation.get("matched_signals") or [],
             "matched_signals": evaluation.get("matched_signals") or [],
@@ -1259,6 +1347,53 @@ def _persist_interactive_audit_turn_evidence(
             "hash": evidence_id,
         }
     )
+    if finding_requires_action(
+        final_verdict=evaluation.get("status"),
+        violation_risk=evaluation.get("violation_risk") or evaluation.get("risk"),
+        data_sensitivity=evaluation.get("data_sensitivity"),
+        policy_context=policy_context,
+    ):
+        finding_id = f"interactive_finding:{conversation_id}:{assistant_turn_number}:{scoring_version}"
+        finding = _finding_store.upsert_finding(
+            {
+                "finding_id": finding_id,
+                "run_id": unified_run_id,
+                "run_type": "interactive_audit",
+                "evidence_ids": [stored["finding_id"]],
+                "target_id": target_registry_name,
+                "target_name": target_registry_name,
+                "target_type": target_type,
+                "source_page": "chat",
+                "engine_id": "sprico_interactive_audit",
+                "engine_name": "SpriCO Interactive Audit",
+                "domain": policy_context.get("target_domain") or "hospital",
+                "policy_id": policy_context.get("policy_id"),
+                "policy_name": _policy_name(policy_context.get("policy_id")),
+                "category": evaluation.get("attack_family") or "Interactive Audit",
+                "severity": str(evaluation.get("violation_risk") or evaluation.get("risk") or "MEDIUM").upper(),
+                "status": "open",
+                "title": f"Interactive Audit turn {assistant_turn_number} requires action",
+                "description": sprico_final_verdict["explanation"],
+                "root_cause": sprico_final_verdict["explanation"],
+                "remediation": "Review the interactive transcript, tighten the target or instructions, and rerun the affected turn.",
+                "review_status": "pending",
+                "final_verdict": evaluation.get("status"),
+                "violation_risk": evaluation.get("violation_risk") or evaluation.get("risk"),
+                "data_sensitivity": evaluation.get("data_sensitivity"),
+                "matched_signals": evaluation.get("matched_signals") or [],
+                "policy_context": policy_context,
+                "prompt_excerpt": latest_user_prompt or prompt_sequence,
+                "response_excerpt": response_text,
+                "legacy_source_ref": {
+                    "collection": "interactive_audit",
+                    "id": conversation_id,
+                    "conversation_id": conversation_id,
+                    "attack_result_id": attack_result_id,
+                },
+            }
+        )
+        _interactive_evidence_store.link_finding(stored["finding_id"], finding["finding_id"])
+    _run_registry.record_interactive_audit_session(stored)
     return str(stored["finding_id"])
 
 
@@ -1426,6 +1561,145 @@ async def _resolve_audit_target(request: CreateAuditRunRequest) -> Any:
     return target
 
 
+def _dedupe_strings(values: list[str] | None) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return ordered
+
+
+def _audit_run_source(run: dict[str, Any]) -> str:
+    source = str(run.get("run_source") or "").strip().lower()
+    if source:
+        return source
+    for result in run.get("results") or []:
+        candidate = str(result.get("run_source") or "").strip().lower()
+        if candidate:
+            return candidate
+    return "audit_workstation"
+
+
+def _structured_run_identity(run: dict[str, Any]) -> dict[str, str]:
+    run_source = _audit_run_source(run)
+    results = list(run.get("results") or [])
+    if any(
+        str(item.get("prompt_source_type") or "").lower() == "benchmark"
+        or item.get("benchmark_scenario_id") is not None
+        for item in results
+    ):
+        return {
+            "run_type": "benchmark_replay",
+            "source_page": "benchmark-library",
+            "engine_id": "pyrit.audit",
+            "engine_name": "Benchmark Replay",
+            "engine_type": "sprico_domain_signals",
+        }
+    if run_source == "sprico_auditspec":
+        return {
+            "run_type": "sprico_auditspec",
+            "source_page": "benchmark-library",
+            "engine_id": "sprico.auditspec",
+            "engine_name": "SpriCO AuditSpec",
+            "engine_type": "sprico_assertions",
+        }
+    return {
+        "run_type": "audit_workstation",
+        "source_page": "audit",
+        "engine_id": "pyrit.audit",
+        "engine_name": "Audit Workstation",
+        "engine_type": "sprico_domain_signals",
+    }
+
+
+def _resolve_policy_identity(policy_id: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    policy = _policy_store.get_policy_for_request(policy_id=policy_id)
+    resolved_id = str(policy.get("id") or "").strip() or None
+    resolved_name = str(policy.get("name") or "").strip() or None
+    return resolved_id, resolved_name
+
+
+def _default_policy_id() -> Optional[str]:
+    policy_id, _ = _resolve_policy_identity(None)
+    return policy_id
+
+
+async def _launch_auditspec_run(
+    *,
+    suite_id: str,
+    suite_name: str,
+    target_registry_name: str,
+    policy_id: Optional[str],
+    comparison_group_id: str,
+    comparison_mode: str,
+    comparison_label: str,
+    execution_profile: Optional[AuditExecutionProfileRequest],
+    background_tasks: BackgroundTasks,
+) -> AuditRunResponse:
+    policy_id, policy_name = _resolve_policy_identity(policy_id)
+    target = await _resolve_audit_target(
+        CreateAuditRunRequest(
+            target_registry_name=target_registry_name,
+            policy_id=policy_id,
+            run_source="sprico_auditspec",
+            allow_text_target=False,
+            execution_profile=execution_profile,
+        )
+    )
+    try:
+        execution_items = repository.build_auditspec_execution_items(
+            suite_id=suite_id,
+            policy_id=policy_id,
+            policy_name=policy_name,
+            comparison_label=comparison_label,
+            comparison_mode=comparison_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if not execution_items:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"AuditSpec suite '{suite_id}' does not contain runnable tests.")
+
+    suite = repository.get_auditspec_suite(suite_id)
+    categories = _dedupe_strings([str(item.get("category_name") or "") for item in execution_items])
+    domains = _dedupe_strings([
+        str(item.get("domain") or item.get("industry_type") or "").strip()
+        for item in execution_items
+    ])
+    run_id = repository.create_run(
+        industry_types=domains,
+        category_names=categories,
+        target_info=target.model_dump(),
+        execution_items=execution_items,
+        execution_profile=execution_profile.model_dump() if execution_profile else None,
+        policy_id=policy_id,
+        policy_name=policy_name,
+        run_source="sprico_auditspec",
+        suite_id=suite_id,
+        suite_name=suite_name,
+        comparison_group_id=comparison_group_id,
+        comparison_label=comparison_label,
+        comparison_mode=comparison_mode,
+        run_metadata={
+            "suite_format": suite.get("format") if isinstance(suite, dict) else None,
+            "suite_tags": list(suite.get("tags") or []) if isinstance(suite, dict) else [],
+            "comparison_group_id": comparison_group_id,
+            "comparison_mode": comparison_mode,
+            "comparison_label": comparison_label,
+            "target_ids": [target_registry_name],
+            "policy_ids": [policy_id] if policy_id else [],
+        },
+    )
+    background_tasks.add_task(_execute_run_background, run_id)
+    run = repository.get_run_detail(run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create AuditSpec run.")
+    return AuditRunResponse(**_serialize_run(run, include_results=True))
+
+
 def _merge_filters(primary: Optional[list[str]], legacy: Optional[list[str]]) -> list[str]:
     merged: list[str] = []
     for source in (primary or []) + (legacy or []):
@@ -1550,10 +1824,13 @@ async def create_audit_run(request: CreateAuditRunRequest, background_tasks: Bac
     _validate_prompt_source_mode(request)
     target = await _resolve_audit_target(request)
     target_prompt_profile = await _resolve_target_prompt_profile(target_registry_name=request.target_registry_name)
+    selected_categories = [] if request.test_ids else (request.categories or None)
+    selected_domains = [] if request.test_ids else (request.domains or None)
+    policy = _policy_store.get_policy_for_request(policy_id=request.policy_id)
     execution_items = repository.resolve_execution_items(
         industry_types=request.industries or None,
-        category_names=request.categories or None,
-        domains=request.domains or None,
+        category_names=selected_categories,
+        domains=selected_domains,
         test_ids=request.test_ids or None,
         variant_ids=request.variant_ids or None,
         prompt_source_mode=request.prompt_source_mode,
@@ -1569,10 +1846,13 @@ async def create_audit_run(request: CreateAuditRunRequest, background_tasks: Bac
         )
     run_id = repository.create_run(
         industry_types=request.industries,
-        category_names=request.categories,
+        category_names=selected_categories or [],
         target_info=target.model_dump(),
         execution_items=execution_items,
         execution_profile=request.execution_profile.model_dump() if request.execution_profile else None,
+        policy_id=policy.get("id"),
+        policy_name=policy.get("name"),
+        run_source=str(request.run_source or "audit_workstation"),
     )
     background_tasks.add_task(_execute_run_background, run_id)
     run = repository.get_run_detail(run_id)
@@ -1806,6 +2086,7 @@ async def save_interactive_audit_conversation(
         turns=[turn.model_dump() for turn in conversation.turns],
         summary=conversation.session_summary.model_dump(),
     )
+    _sync_audit_run_records(run_id)
     return await get_audit_results(run_id)
 
 
@@ -1844,6 +2125,161 @@ async def get_benchmark_library(
             for row in repository.list_benchmark_media(source_type=source_type)
         ],
         taxonomy=[BenchmarkTaxonomyRow(**row) for row in repository.get_benchmark_taxonomy()],
+    )
+
+
+@router.get("/auditspec/suites", response_model=list[AuditSpecSuiteResponse])
+async def list_auditspec_suites(
+    search: Optional[str] = Query(None, description="Search by suite id, name, description, or domain"),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[AuditSpecSuiteResponse]:
+    return [AuditSpecSuiteResponse(**item) for item in repository.list_auditspec_suites(query_text=search, limit=limit)]
+
+
+@router.get("/auditspec/suites/{suite_id}", response_model=AuditSpecSuiteResponse)
+async def get_auditspec_suite(suite_id: str) -> AuditSpecSuiteResponse:
+    suite = repository.get_auditspec_suite(suite_id)
+    if suite is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AuditSpec suite '{suite_id}' not found")
+    return AuditSpecSuiteResponse(**suite)
+
+
+@router.post("/auditspec/validate", response_model=AuditSpecValidateResponse)
+async def validate_auditspec_suite(request: AuditSpecImportRequest) -> AuditSpecValidateResponse:
+    try:
+        suite_format, suite = parse_auditspec_content(request.content)
+    except (AuditSpecValidationError, ValueError, json.JSONDecodeError, yaml.YAMLError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return AuditSpecValidateResponse(format=suite_format, suite=AuditSpecSuiteResponse(**suite))
+
+
+@router.post("/auditspec/import", response_model=AuditSpecSuiteResponse, status_code=status.HTTP_201_CREATED)
+async def import_auditspec_suite(request: AuditSpecImportRequest) -> AuditSpecSuiteResponse:
+    try:
+        suite_format, suite = parse_auditspec_content(request.content)
+        stored = repository.upsert_auditspec_suite(suite, suite_format=suite_format)
+    except (AuditSpecValidationError, ValueError, json.JSONDecodeError, yaml.YAMLError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return AuditSpecSuiteResponse(**stored)
+
+
+@router.post("/auditspec/runs", response_model=AuditSpecRunLaunchResponse, status_code=status.HTTP_201_CREATED)
+async def create_auditspec_runs(request: AuditSpecRunRequest, background_tasks: BackgroundTasks) -> AuditSpecRunLaunchResponse:
+    suite = repository.get_auditspec_suite(request.suite_id)
+    if suite is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AuditSpec suite '{request.suite_id}' not found")
+
+    comparison_mode = str(request.comparison_mode or "single_target").strip().lower() or "single_target"
+    selected_targets = _dedupe_strings(request.target_ids or suite.get("target_ids") or [])
+    selected_policies = _dedupe_strings(request.policy_ids or ([suite.get("policy_id")] if suite.get("policy_id") else []))
+    comparison_group_id = f"auditspec_compare:{uuid.uuid4().hex[:12]}"
+    created_runs: list[AuditRunResponse] = []
+
+    if comparison_mode == "single_target":
+        if len(selected_targets) != 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Single-target AuditSpec runs require exactly one target.")
+        selected_policies = selected_policies or _dedupe_strings([_default_policy_id()])
+        run = await _launch_auditspec_run(
+            suite_id=suite["suite_id"],
+            suite_name=suite["name"],
+            target_registry_name=selected_targets[0],
+            policy_id=selected_policies[0],
+            comparison_group_id=comparison_group_id,
+            comparison_mode=comparison_mode,
+            comparison_label=request.baseline_label or "single-target",
+            execution_profile=request.execution_profile,
+            background_tasks=background_tasks,
+        )
+        created_runs.append(run)
+    elif comparison_mode == "multi_target_comparison":
+        if len(selected_targets) < 2:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Multi-target comparison requires at least two targets.")
+        selected_policies = selected_policies or _dedupe_strings([_default_policy_id()])
+        for target_registry_name in selected_targets:
+            created_runs.append(
+                await _launch_auditspec_run(
+                    suite_id=suite["suite_id"],
+                    suite_name=suite["name"],
+                    target_registry_name=target_registry_name,
+                    policy_id=selected_policies[0],
+                    comparison_group_id=comparison_group_id,
+                    comparison_mode=comparison_mode,
+                    comparison_label=target_registry_name,
+                    execution_profile=request.execution_profile,
+                    background_tasks=background_tasks,
+                )
+            )
+    elif comparison_mode in {"prompt_version_comparison", "baseline_candidate"} and request.candidate_suite_id:
+        candidate_suite = repository.get_auditspec_suite(request.candidate_suite_id)
+        if candidate_suite is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Candidate AuditSpec suite '{request.candidate_suite_id}' not found")
+        if len(selected_targets) != 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Prompt version comparison requires exactly one target.")
+        selected_policies = selected_policies or _dedupe_strings([_default_policy_id()])
+        created_runs.append(
+            await _launch_auditspec_run(
+                suite_id=suite["suite_id"],
+                suite_name=suite["name"],
+                target_registry_name=selected_targets[0],
+                policy_id=selected_policies[0],
+                comparison_group_id=comparison_group_id,
+                comparison_mode="prompt_version_comparison",
+                comparison_label=request.baseline_label or "baseline",
+                execution_profile=request.execution_profile,
+                background_tasks=background_tasks,
+            )
+        )
+        created_runs.append(
+            await _launch_auditspec_run(
+                suite_id=candidate_suite["suite_id"],
+                suite_name=candidate_suite["name"],
+                target_registry_name=selected_targets[0],
+                policy_id=selected_policies[0],
+                comparison_group_id=comparison_group_id,
+                comparison_mode="prompt_version_comparison",
+                comparison_label=request.candidate_label or "candidate",
+                execution_profile=request.execution_profile,
+                background_tasks=background_tasks,
+            )
+        )
+    elif comparison_mode in {"policy_version_comparison", "baseline_candidate"}:
+        if len(selected_targets) != 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Policy comparison requires exactly one target.")
+        if len(selected_policies) < 2:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Policy comparison requires at least two policies.")
+        created_runs.append(
+            await _launch_auditspec_run(
+                suite_id=suite["suite_id"],
+                suite_name=suite["name"],
+                target_registry_name=selected_targets[0],
+                policy_id=selected_policies[0],
+                comparison_group_id=comparison_group_id,
+                comparison_mode="policy_version_comparison",
+                comparison_label=request.baseline_label or selected_policies[0],
+                execution_profile=request.execution_profile,
+                background_tasks=background_tasks,
+            )
+        )
+        created_runs.append(
+            await _launch_auditspec_run(
+                suite_id=suite["suite_id"],
+                suite_name=suite["name"],
+                target_registry_name=selected_targets[0],
+                policy_id=selected_policies[1],
+                comparison_group_id=comparison_group_id,
+                comparison_mode="policy_version_comparison",
+                comparison_label=request.candidate_label or selected_policies[1],
+                execution_profile=request.execution_profile,
+                background_tasks=background_tasks,
+            )
+        )
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported AuditSpec comparison_mode '{request.comparison_mode}'.")
+
+    return AuditSpecRunLaunchResponse(
+        comparison_group_id=comparison_group_id,
+        comparison_mode=comparison_mode,
+        runs=created_runs,
     )
 
 
@@ -1994,5 +2430,176 @@ async def _execute_run_background(run_id: str) -> None:
     executor = AuditExecutor(repository)
     try:
         await executor.execute_run(run_id)
+        _sync_audit_run_records(run_id)
     except Exception:
         logger.exception("Audit run '%s' failed during background execution", run_id)
+
+
+def _sync_audit_run_records(run_id: str) -> None:
+    run = repository.get_run_detail(run_id)
+    if run is None:
+        return
+    results = list(run.get("results") or [])
+    has_interactive = any(str(item.get("prompt_source_type") or "").lower() == "interactive" for item in results)
+    if not has_interactive:
+        _sync_structured_audit_evidence(run)
+    _run_registry.record_audit_run(run)
+
+
+def _sync_structured_audit_evidence(run: dict[str, Any]) -> None:
+    unified_run_id = _audit_unified_run_id(run)
+    identity = _structured_run_identity(run)
+    run_type = identity["run_type"]
+    source_page = identity["source_page"]
+    engine_id = identity["engine_id"]
+    engine_name = identity["engine_name"]
+    engine_type = identity["engine_type"]
+    target_id = run.get("target_registry_name") or run.get("target_id")
+    target_name = run.get("model_name") or target_id
+    target_type = run.get("target_type")
+    for result in run.get("results") or []:
+        evidence_id = f"audit_result:{run['job_id']}:{result['id']}"
+        policy_id = result.get("policy_id") or run.get("policy_id")
+        policy_name = result.get("policy_name") or run.get("policy_name") or _policy_name(policy_id)
+        policy_context = {
+            "policy_id": policy_id,
+            "policy_name": policy_name,
+            "policy_domain": result.get("policy_domain"),
+            "category_name": result.get("category_name"),
+            "severity": result.get("severity"),
+            "execution_scope_label": result.get("execution_scope_label"),
+            "suite_id": result.get("suite_id") or run.get("suite_id"),
+            "suite_name": result.get("suite_name") or run.get("suite_name"),
+            "suite_test_id": result.get("suite_test_id"),
+            "comparison_group_id": run.get("comparison_group_id"),
+            "comparison_label": run.get("comparison_label"),
+            "comparison_mode": run.get("comparison_mode"),
+        }
+        matched_signals = _audit_matched_signals(result)
+        stored = _interactive_evidence_store.append_event(
+            {
+                "evidence_id": evidence_id,
+                "run_id": unified_run_id,
+                "run_type": run_type,
+                "source_page": source_page,
+                "engine": engine_id,
+                "engine_id": engine_id,
+                "engine_name": engine_name,
+                "engine_type": engine_type,
+                "engine_version": result.get("scoring_version") or "v2",
+                "target_id": target_id,
+                "target_name": target_name,
+                "target_type": target_type,
+                "scan_id": run["job_id"],
+                "turn_id": str(result.get("id")),
+                "evidence_type": "auditspec_result" if run_type == "sprico_auditspec" else "audit_result",
+                "policy_id": policy_id,
+                "policy_name": policy_name,
+                "policy_context": policy_context,
+                "raw_input": result.get("prompt_sent") or result.get("actual_prompt_sequence"),
+                "raw_output": result.get("response_received"),
+                "retrieved_context": result.get("interaction_log") or [],
+                "raw_result": result,
+                "assertion_results": result.get("assertion_results") or [],
+                "matched_signals": matched_signals,
+                "final_verdict": result.get("score_status"),
+                "violation_risk": result.get("risk_level"),
+                "data_sensitivity": result.get("data_sensitivity"),
+                "sprico_final_verdict": {
+                    "verdict": result.get("score_status"),
+                    "violation_risk": result.get("risk_level"),
+                    "data_sensitivity": result.get("data_sensitivity"),
+                    "matched_signals": matched_signals,
+                    "assertion_results": result.get("assertion_results") or [],
+                    "explanation": result.get("score_reason") or result.get("audit_reasoning"),
+                },
+                "explanation": result.get("score_reason") or result.get("audit_reasoning"),
+                "redaction_status": "payload_redacted",
+                "hash": evidence_id,
+            }
+        )
+        if finding_requires_action(
+            final_verdict=result.get("score_status"),
+            violation_risk=result.get("risk_level"),
+            data_sensitivity=result.get("data_sensitivity"),
+            policy_context=policy_context,
+        ):
+            finding = _finding_store.upsert_finding(
+                {
+                    "finding_id": f"audit_finding:{run['job_id']}:{result['id']}",
+                    "run_id": unified_run_id,
+                    "run_type": run_type,
+                    "evidence_ids": [stored["evidence_id"]],
+                    "target_id": target_id,
+                    "target_name": target_name,
+                    "target_type": target_type,
+                    "source_page": source_page,
+                    "engine_id": engine_id,
+                    "engine_name": engine_name,
+                    "domain": result.get("policy_domain") or result.get("industry_type") or "generic",
+                    "policy_id": policy_id,
+                    "policy_name": policy_name,
+                    "category": result.get("category_name"),
+                    "severity": str(result.get("risk_level") or result.get("severity") or "MEDIUM").upper(),
+                    "status": "open",
+                    "title": f"{result.get('category_name') or ('AuditSpec' if run_type == 'sprico_auditspec' else 'Audit')}: {result.get('suite_test_id') or result.get('test_identifier') or result.get('result_label') or result.get('id')}",
+                    "description": result.get("score_reason") or result.get("audit_reasoning") or "Audit result requires review.",
+                    "root_cause": result.get("audit_reasoning") or result.get("score_reason") or "Audit result requires review.",
+                    "remediation": (
+                        "Review the AuditSpec assertions, target response, and applied policy, then rerun the affected suite test."
+                        if run_type == "sprico_auditspec"
+                        else "Review the workbook scenario, target behavior, and scoring rationale, then rerun the affected audit case."
+                    ),
+                    "review_status": "pending",
+                    "final_verdict": result.get("score_status"),
+                    "violation_risk": result.get("risk_level"),
+                    "data_sensitivity": result.get("data_sensitivity"),
+                    "matched_signals": matched_signals,
+                    "policy_context": policy_context,
+                    "prompt_excerpt": result.get("prompt_sent") or result.get("actual_prompt_sequence"),
+                    "response_excerpt": result.get("response_received"),
+                    "legacy_source_ref": {"collection": "audit_runs", "id": run["job_id"], "run_id": run["job_id"], "result_id": result["id"]},
+                }
+            )
+            _interactive_evidence_store.link_finding(stored["finding_id"], finding["finding_id"])
+
+
+def _audit_unified_run_id(run: dict[str, Any]) -> str:
+    identity = _structured_run_identity(run)
+    if identity["run_type"] == "benchmark_replay":
+        return f"benchmark_replay:{run['job_id']}"
+    if identity["run_type"] == "sprico_auditspec":
+        return f"sprico_auditspec:{run['job_id']}"
+    return f"audit_workstation:{run['job_id']}"
+
+
+def _audit_matched_signals(result: dict[str, Any]) -> list[dict[str, Any]]:
+    signals = []
+    for rule in result.get("matched_rules") or []:
+        signals.append({"signal_id": str(rule), "source": "matched_rule"})
+    for entity in result.get("detected_entities") or []:
+        if isinstance(entity, dict):
+            signal_id = str(entity.get("entity_type") or "detected_entity")
+            signals.append({"signal_id": signal_id, "source": "detected_entity", "raw": entity})
+    for assertion in result.get("assertion_results") or []:
+        if not isinstance(assertion, dict):
+            continue
+        signal_id = str(assertion.get("assertion_id") or assertion.get("type") or "assertion")
+        signals.append(
+            {
+                "signal_id": signal_id,
+                "source": "assertion_result",
+                "status": assertion.get("status"),
+                "severity": assertion.get("severity"),
+                "raw": assertion,
+            }
+        )
+    return signals
+
+
+def _policy_name(policy_id: Any) -> str | None:
+    key = str(policy_id or "").strip()
+    if not key:
+        return None
+    policy = _run_registry._backend.get_record("policies", key)  # noqa: SLF001 - additive lookup only
+    return str(policy.get("name")) if isinstance(policy, dict) and policy.get("name") else None

@@ -668,7 +668,17 @@ export function ScanReport({
           <div className="sprico-message">No evidence produced because the scanner did not complete.</div>
         )}
         {findingsCount(scan) > 0 && onOpenFindings && (
-          <Button appearance="secondary" onClick={onOpenFindings}>Open Findings for this scan</Button>
+          <Button
+            appearance="secondary"
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                window.sessionStorage.setItem('spricoFindingsRunId', scan.run_id ?? `garak_scan:${scan.scan_id}`)
+              }
+              onOpenFindings()
+            }}
+          >
+            Open Findings for this scan
+          </Button>
         )}
         {scannerEvidence.length === 0 ? (
           <EmptyMessage>No scanner evidence rows for this scan.</EmptyMessage>

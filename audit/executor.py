@@ -7,9 +7,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from audit.auditspec import evaluate_auditspec_assertions, merge_auditspec_evaluation, summarize_assertion_results
 from audit.database import AuditDatabase
 from audit.scorer import evaluate_response
 from pyrit.backend.models.attacks import AddMessageRequest, CreateAttackRequest, MessagePieceRequest
+from pyrit.backend.sprico.conditions import SpriCOConditionStore
+from pyrit.backend.sprico.policy_store import SpriCOPolicyStore
 from pyrit.backend.services.attack_service import get_attack_service
 from pyrit.backend.services.target_service import get_target_service
 
@@ -25,6 +28,8 @@ class AuditExecutor:
         self._repository = repository or AuditDatabase()
         self._repository.initialize()
         self._attack_service = get_attack_service()
+        self._policy_store = SpriCOPolicyStore()
+        self._condition_store = SpriCOConditionStore()
 
     async def execute_run(self, run_id: str) -> None:
         """Execute all pending tests for a run."""
@@ -139,6 +144,24 @@ class AuditExecutor:
             conversation_history=conversation_history[:-1] if conversation_history else [],
         )
 
+        assertion_results = self._evaluate_auditspec_assertions(
+            result=result,
+            response_text=response_text,
+            prompt_sent="\n".join(
+                f"Prompt {index}: {prompt}" for index, prompt in enumerate(prompt_steps, start=1)
+            ),
+            evaluation=evaluation,
+        )
+        if assertion_results:
+            policy_context = self._auditspec_policy_context(result=result)
+            evaluation = merge_auditspec_evaluation(
+                base_evaluation=evaluation,
+                assertion_results=assertion_results,
+                policy_context=policy_context,
+                fallback_severity=str(result.get("severity") or "MEDIUM"),
+            )
+            evaluation["assertion_summary"] = summarize_assertion_results(assertion_results)
+
         return {
             "attack_result_id": attack.attack_result_id,
             "conversation_id": attack.conversation_id,
@@ -148,6 +171,49 @@ class AuditExecutor:
             "response_text": response_text,
             "interaction_log": interaction_log,
             "evaluation": evaluation,
+        }
+
+    def _evaluate_auditspec_assertions(
+        self,
+        *,
+        result: dict[str, Any],
+        response_text: str,
+        prompt_sent: str,
+        evaluation: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        if str(result.get("run_source") or "").strip().lower() != "sprico_auditspec":
+            return []
+        supporting_documents = dict(result.get("supporting_documents_snapshot") or {})
+        assertions = list(supporting_documents.get("auditspec_assertions") or [])
+        if not assertions:
+            return []
+        policy_context = self._auditspec_policy_context(result=result)
+        active_signals = [
+            signal.model_dump()
+            for signal in self._condition_store.list_active_signals(
+                text=response_text,
+                policy_context=policy_context,
+            )
+        ]
+        return evaluate_auditspec_assertions(
+            assertions=assertions,
+            response_text=response_text,
+            prompt_text=prompt_sent,
+            expected_behavior=str(result.get("expected_behavior_snapshot") or ""),
+            evaluation=evaluation,
+            policy_context=policy_context,
+            active_signals=active_signals,
+        )
+
+    def _auditspec_policy_context(self, *, result: dict[str, Any]) -> dict[str, Any]:
+        policy_id = str(result.get("policy_id") or "").strip() or None
+        policy = self._policy_store.get_policy_for_request(policy_id=policy_id)
+        return {
+            "policy_id": policy.get("id"),
+            "policy_name": policy.get("name"),
+            "policy_mode": policy.get("mode"),
+            "policy_domain": policy.get("target_domain") or result.get("domain") or "generic",
+            "sensitivity": policy.get("sensitivity"),
         }
 
     @staticmethod

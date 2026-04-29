@@ -37,6 +37,14 @@ import type {
   BenchmarkTaxonomyRow,
   BenchmarkCompareResponse,
   BenchmarkReplayRequest,
+  AuditSpecSuite,
+  AuditSpecValidateResponse,
+  AuditSpecRunRequest,
+  AuditSpecRunLaunchResponse,
+  PromptfooStatus,
+  PromptfooCatalog,
+  PromptfooRuntimeRequest,
+  PromptfooRuntimeLaunchResponse,
   CreateBenchmarkSourceRequest,
   FlipAttackImportRequest,
   AuditReportPayload,
@@ -62,6 +70,9 @@ import type {
   RedScan,
   StorageStatus,
   ActivityHistoryResponse,
+  SpriCORunRecord,
+  SpriCORunSummary,
+  SpriCOFinding,
   VersionInfo,
 } from '../types'
 
@@ -579,6 +590,9 @@ export const spricoEvidenceApi = {
   list: async (params?: {
     limit?: number
     scan_id?: string
+    run_id?: string
+    target_id?: string
+    source_page?: string
     engine?: string
     engine_type?: string
     policy_id?: string
@@ -587,6 +601,69 @@ export const spricoEvidenceApi = {
     evidence_id?: string
   }): Promise<SpriCOEvidenceItem[]> => {
     const response = await apiClient.get('/evidence', { params })
+    return response.data
+  },
+}
+
+export const spricoRunsApi = {
+  list: async (params?: {
+    limit?: number
+    run_type?: string
+    target_id?: string
+    source_page?: string
+    status?: string
+    final_verdict?: string
+  }): Promise<SpriCORunRecord[]> => {
+    const response = await apiClient.get('/runs', { params })
+    return response.data
+  },
+
+  get: async (runId: string): Promise<SpriCORunRecord> => {
+    const response = await apiClient.get(`/runs/${encodeURIComponent(runId)}`)
+    return response.data
+  },
+
+  summary: async (): Promise<SpriCORunSummary> => {
+    const response = await apiClient.get('/runs/summary')
+    return response.data
+  },
+
+  byTarget: async (targetId: string, limit = 250): Promise<SpriCORunRecord[]> => {
+    const response = await apiClient.get(`/runs/by-target/${encodeURIComponent(targetId)}`, { params: { limit } })
+    return response.data
+  },
+
+  evidence: async (runId: string, limit = 500): Promise<SpriCOEvidenceItem[]> => {
+    const response = await apiClient.get(`/runs/${encodeURIComponent(runId)}/evidence`, { params: { limit } })
+    return response.data
+  },
+
+  findings: async (runId: string, limit = 500): Promise<SpriCOFinding[]> => {
+    const response = await apiClient.get(`/runs/${encodeURIComponent(runId)}/findings`, { params: { limit } })
+    return response.data
+  },
+}
+
+export const spricoFindingsApi = {
+  list: async (params?: {
+    limit?: number
+    run_id?: string
+    target_id?: string
+    source_page?: string
+    engine?: string
+    policy_id?: string
+    domain?: string
+    severity?: string
+    status?: string
+    review_status?: string
+    search?: string
+  }): Promise<SpriCOFinding[]> => {
+    const response = await apiClient.get('/findings', { params })
+    return response.data
+  },
+
+  get: async (findingId: string): Promise<SpriCOFinding> => {
+    const response = await apiClient.get(`/findings/${encodeURIComponent(findingId)}`)
     return response.data
   },
 }
@@ -620,6 +697,23 @@ export const storageApi = {
 export const activityApi = {
   getHistory: async (limit = 5): Promise<ActivityHistoryResponse> => {
     const response = await apiClient.get('/activity/history', { params: { limit } })
+    return response.data
+  },
+}
+
+export const promptfooApi = {
+  getStatus: async (): Promise<PromptfooStatus> => {
+    const response = await apiClient.get('/promptfoo/status')
+    return response.data
+  },
+
+  getCatalog: async (): Promise<PromptfooCatalog> => {
+    const response = await apiClient.get('/promptfoo/catalog')
+    return response.data
+  },
+
+  createRuns: async (request: PromptfooRuntimeRequest): Promise<PromptfooRuntimeLaunchResponse> => {
+    const response = await apiClient.post('/promptfoo/runs', request)
     return response.data
   },
 }
@@ -887,6 +981,31 @@ export const auditApi = {
 
   replayBenchmarkScenario: async (scenarioId: number, request: BenchmarkReplayRequest): Promise<AuditRun> => {
     const response = await apiClient.post(`/benchmarks/scenarios/${scenarioId}/replay`, request)
+    return response.data
+  },
+
+  listAuditSpecSuites: async (params?: { search?: string; limit?: number }): Promise<AuditSpecSuite[]> => {
+    const response = await apiClient.get('/auditspec/suites', { params })
+    return response.data
+  },
+
+  getAuditSpecSuite: async (suiteId: string): Promise<AuditSpecSuite> => {
+    const response = await apiClient.get(`/auditspec/suites/${encodeURIComponent(suiteId)}`)
+    return response.data
+  },
+
+  validateAuditSpec: async (content: string): Promise<AuditSpecValidateResponse> => {
+    const response = await apiClient.post('/auditspec/validate', { content })
+    return response.data
+  },
+
+  importAuditSpec: async (content: string): Promise<AuditSpecSuite> => {
+    const response = await apiClient.post('/auditspec/import', { content })
+    return response.data
+  },
+
+  createAuditSpecRuns: async (request: AuditSpecRunRequest): Promise<AuditSpecRunLaunchResponse> => {
+    const response = await apiClient.post('/auditspec/runs', request)
     return response.data
   },
 }

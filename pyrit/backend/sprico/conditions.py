@@ -8,6 +8,8 @@ import re
 import uuid
 from typing import Any
 
+from pyrit.backend.sprico.evidence_store import SpriCOEvidenceStore
+from pyrit.backend.sprico.runs import SpriCORunRegistry
 from pyrit.backend.sprico.storage import StorageBackend, get_storage_backend
 from scoring.packs.hospital_privacy.entity_extractors import extract_entities
 from scoring.types import DataSensitivity, SensitiveSignal, Verdict, ViolationRisk
@@ -35,6 +37,8 @@ class ConditionLifecycleError(ValueError):
 class SpriCOConditionStore:
     def __init__(self, backend: StorageBackend | None = None) -> None:
         self._backend = backend or get_storage_backend()
+        self._evidence_store = SpriCOEvidenceStore(backend=self._backend)
+        self._run_registry = SpriCORunRegistry(backend=self._backend, evidence_store=self._evidence_store)
 
     def list_conditions(self) -> list[dict[str, Any]]:
         return self._backend.list_records("custom_conditions")
@@ -96,12 +100,50 @@ class SpriCOConditionStore:
         condition["simulation_result"] = result
         condition["updated_at"] = now
         self._append_audit(condition, "simulate", str(payload.get("actor") or condition.get("author") or "system"), result)
+        simulation_id = f"{condition_id}:{now}"
         self._backend.upsert_record(
             "condition_simulations",
-            f"{condition_id}:{now}",
-            {"id": f"{condition_id}:{now}", "condition_id": condition_id, "version": condition["version"], "result": result, "created_at": now},
+            simulation_id,
+            {"id": simulation_id, "condition_id": condition_id, "version": condition["version"], "result": result, "created_at": now},
         )
+        if result.get("matched"):
+            condition_type = str(condition.get("condition_type") or "simulation")
+            self._evidence_store.append_event(
+                {
+                    "evidence_id": f"condition_simulation:{simulation_id}",
+                    "run_id": f"custom_condition_simulation:{simulation_id}",
+                    "run_type": "custom_condition_simulation",
+                    "source_page": "conditions",
+                    "engine": f"sprico.condition.{condition_type}",
+                    "engine_id": f"sprico.condition.{condition_type}",
+                    "engine_name": "SpriCO Custom Conditions",
+                    "engine_type": "sprico_domain_signals",
+                    "engine_version": condition["version"],
+                    "evidence_type": "custom_condition_simulation",
+                    "policy_context": policy_context,
+                    "raw_input": text,
+                    "raw_output": "",
+                    "raw_result": result,
+                    "matched_signals": result.get("signals") or [],
+                    "matched_conditions": [condition_id],
+                    "final_verdict": "NOT_APPLICABLE",
+                    "violation_risk": condition.get("violation_risk"),
+                    "data_sensitivity": condition.get("data_sensitivity"),
+                    "sprico_final_verdict": {
+                        "verdict": "NOT_APPLICABLE",
+                        "violation_risk": condition.get("violation_risk"),
+                        "data_sensitivity": condition.get("data_sensitivity"),
+                        "matched_signals": result.get("signals") or [],
+                        "explanation": "Custom condition simulation emits signals only; final verdict authority remains SpriCO PolicyDecisionEngine.",
+                    },
+                    "explanation": "Custom condition simulation emitted one or more signals.",
+                    "redaction_status": "payload_returned",
+                }
+            )
         self._persist(condition, action="simulate")
+        self._run_registry.record_condition_simulation(
+            {"id": simulation_id, "condition_id": condition_id, "version": condition["version"], "result": result, "created_at": now}
+        )
         return result
 
     def add_test_case(self, condition_id: str, payload: dict[str, Any]) -> dict[str, Any]:

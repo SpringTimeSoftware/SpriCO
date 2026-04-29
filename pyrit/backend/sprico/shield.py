@@ -11,7 +11,9 @@ from urllib.parse import urlparse
 
 from pyrit.backend.sprico.conditions import SpriCOConditionStore
 from pyrit.backend.sprico.evidence_store import SpriCOEvidenceStore
+from pyrit.backend.sprico.findings import SpriCOFindingStore, finding_requires_action
 from pyrit.backend.sprico.policy_store import SpriCOPolicyStore
+from pyrit.backend.sprico.runs import SpriCORunRegistry
 from scoring.context_resolver import ConversationContextResolver
 from scoring.packs.hospital_privacy.entity_extractors import extract_entities
 from scoring.policy_context import build_policy_context
@@ -44,7 +46,9 @@ class SpriCOShieldService:
         self._engine = PolicyDecisionEngine()
         self._resolver = ConversationContextResolver()
         self._evidence_store = SpriCOEvidenceStore()
+        self._finding_store = SpriCOFindingStore(evidence_store=self._evidence_store)
         self._condition_store = SpriCOConditionStore()
+        self._run_registry = SpriCORunRegistry(evidence_store=self._evidence_store, finding_store=self._finding_store)
 
     def check(self, request: dict[str, Any]) -> dict[str, Any]:
         messages = list(request.get("messages") or [])
@@ -94,14 +98,29 @@ class SpriCOShieldService:
             },
             "dev_info": _dev_info(decision, policy) if request.get("dev_info", False) else {},
         }
+        request_uuid = str(response["metadata"]["request_uuid"])
+        unified_run_id = f"shield_check:{request_uuid}"
         stored = self._evidence_store.append_event(
             {
+                "run_id": unified_run_id,
+                "run_type": "shield_check",
+                "source_page": "shield",
                 "engine": "sprico.shield",
+                "engine_id": "sprico.shield",
+                "engine_name": "SpriCO Shield",
                 "engine_version": "v1",
                 "target_id": request.get("target_id"),
                 "project_id": request.get("project_id"),
                 "policy_id": policy.get("id"),
+                "policy_name": policy.get("name"),
                 "policy_context": policy_context.to_dict(),
+                "authorization_context": {
+                    "policy_mode": policy_context.policy_mode,
+                    "access_context": policy_context.access_context,
+                    "authorization_source": policy_context.authorization_source,
+                },
+                "raw_input": current_turn["user_prompt"] or latest_text,
+                "raw_output": latest_text if latest_role == "assistant" else "",
                 "raw_engine_result": {"decision": response["decision"], "breakdown": response["breakdown"]},
                 "matched_signals": response["matched_signals"],
                 "final_verdict": response["verdict"],
@@ -111,6 +130,52 @@ class SpriCOShieldService:
             }
         )
         response["metadata"]["evidence_id"] = stored["finding_id"]
+        linked_finding_ids: list[str] = []
+        if finding_requires_action(
+            final_verdict=response["verdict"],
+            violation_risk=response["violation_risk"],
+            data_sensitivity=response["data_sensitivity"],
+            policy_context=policy_context.to_dict(),
+        ):
+            finding = self._finding_store.upsert_finding(
+                {
+                    "finding_id": f"shield_finding:{request_uuid}",
+                    "run_id": unified_run_id,
+                    "run_type": "shield_check",
+                    "evidence_ids": [stored["finding_id"]],
+                    "target_id": request.get("target_id"),
+                    "source_page": "shield",
+                    "engine_id": "sprico.shield",
+                    "engine_name": "SpriCO Shield",
+                    "domain": policy.get("target_domain") or "generic",
+                    "policy_id": policy.get("id"),
+                    "policy_name": policy.get("name"),
+                    "severity": response["violation_risk"],
+                    "status": "open",
+                    "title": "Shield policy check produced an actionable result",
+                    "description": decision.explanation,
+                    "root_cause": decision.explanation,
+                    "remediation": "Review the request, authorization context, and active Shield policy before retrying.",
+                    "review_status": "pending",
+                    "final_verdict": response["verdict"],
+                    "violation_risk": response["violation_risk"],
+                    "data_sensitivity": response["data_sensitivity"],
+                    "matched_signals": response["matched_signals"],
+                    "policy_context": policy_context.to_dict(),
+                    "prompt_excerpt": current_turn["user_prompt"] or latest_text,
+                    "response_excerpt": latest_text if latest_role == "assistant" else "",
+                    "legacy_source_ref": {"collection": "shield_events", "id": stored["finding_id"], "evidence_id": stored["finding_id"]},
+                }
+            )
+            linked_finding_ids = [finding["finding_id"]]
+            self._evidence_store.link_finding(stored["finding_id"], finding["finding_id"])
+        self._run_registry.record_shield_check(
+            {
+                **stored,
+                "run_id": unified_run_id,
+                "linked_finding_ids": linked_finding_ids,
+            }
+        )
         return response
 
     def simulate_policy(self, *, policy: dict[str, Any], messages: list[dict[str, Any]]) -> dict[str, Any]:

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { ViewName } from '../Sidebar/Navigation'
 import { auditApi, targetsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type {
@@ -9,9 +10,10 @@ import type {
   BenchmarkScenario,
   TargetInstance,
 } from '../../types'
+import AuditSpecWorkbench from './AuditSpecWorkbench'
 import './auditPlatform.css'
 
-type BenchmarkTab = 'public_json' | 'internal_pack' | 'imported_pack' | 'gif_case'
+type BenchmarkTab = 'public_json' | 'internal_pack' | 'imported_pack' | 'gif_case' | 'auditspec'
 type ReplayMode = 'COMPLIANCE' | 'ROBUSTNESS' | 'ADVANCED'
 
 const TABS: Array<{ code: BenchmarkTab; label: string; description: string }> = [
@@ -19,6 +21,7 @@ const TABS: Array<{ code: BenchmarkTab; label: string; description: string }> = 
   { code: 'internal_pack', label: 'My Packs', description: 'Reusable internal scenario packs curated by auditors.' },
   { code: 'imported_pack', label: 'Imported Packs', description: 'Imported benchmark packs normalized into SQLite.' },
   { code: 'gif_case', label: 'Case Study Gallery', description: 'Visual explainers and GIF/image case studies.' },
+  { code: 'auditspec', label: 'AuditSpec', description: 'SpriCO-native YAML/JSON suites with assertions, comparisons, repeatable evals, and optional promptfoo runtime import.' },
 ]
 
 const REFERENCE_NOTICE = 'Public benchmark reference data; not client evidence.'
@@ -35,9 +38,10 @@ const HOSPITAL_BENCHMARK_EXAMPLES = [
 
 interface BenchmarkLibraryPageProps {
   onOpenRun?: (runId: string) => void
+  onNavigate?: (view: ViewName) => void
 }
 
-export default function BenchmarkLibraryPage({ onOpenRun }: BenchmarkLibraryPageProps) {
+export default function BenchmarkLibraryPage({ onOpenRun, onNavigate }: BenchmarkLibraryPageProps) {
   const [activeTab, setActiveTab] = useState<BenchmarkTab>('public_json')
   const [library, setLibrary] = useState<BenchmarkLibraryResponse | null>(null)
   const [selectedScenario, setSelectedScenario] = useState<BenchmarkScenario | null>(null)
@@ -70,6 +74,11 @@ export default function BenchmarkLibraryPage({ onOpenRun }: BenchmarkLibraryPage
 
   useEffect(() => {
     const load = async () => {
+      if (activeTab === 'auditspec') {
+        setLibrary(null)
+        setSelectedScenario(null)
+        return
+      }
       try {
         const response = await auditApi.getBenchmarkLibrary({
           source_type: activeTab,
@@ -90,6 +99,10 @@ export default function BenchmarkLibraryPage({ onOpenRun }: BenchmarkLibraryPage
 
   useEffect(() => {
     const loadCompare = async () => {
+      if (activeTab === 'auditspec') {
+        setCompare(null)
+        return
+      }
       if (!selectedScenario) {
         setCompare(null)
         return
@@ -222,6 +235,11 @@ export default function BenchmarkLibraryPage({ onOpenRun }: BenchmarkLibraryPage
         </div>
       </section>
 
+      {activeTab === 'auditspec' && (
+        <AuditSpecWorkbench onOpenRun={onOpenRun} onNavigate={onNavigate} />
+      )}
+
+      {activeTab !== 'auditspec' && (
       <section className="audit-benchmark-layout">
         <aside className="audit-panel audit-benchmark-taxonomy">
           <div className="audit-panel-header">
@@ -376,6 +394,7 @@ export default function BenchmarkLibraryPage({ onOpenRun }: BenchmarkLibraryPage
           </section>
         </main>
       </section>
+      )}
     </div>
   )
 }

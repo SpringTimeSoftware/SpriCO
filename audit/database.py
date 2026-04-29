@@ -140,6 +140,15 @@ CREATE TABLE IF NOT EXISTS audit_runs (
     model_name TEXT,
     endpoint TEXT,
     supports_multi_turn INTEGER NOT NULL DEFAULT 1,
+    run_source TEXT NOT NULL DEFAULT 'audit_workstation',
+    policy_id TEXT,
+    policy_name TEXT,
+    suite_id TEXT,
+    suite_name TEXT,
+    comparison_group_id TEXT,
+    comparison_label TEXT,
+    comparison_mode TEXT,
+    run_metadata TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL,
     selected_industries TEXT NOT NULL DEFAULT '[]',
     selected_categories TEXT NOT NULL DEFAULT '[]',
@@ -169,6 +178,14 @@ CREATE TABLE IF NOT EXISTS audit_results (
     prompt_source_type TEXT,
     prompt_source_label TEXT,
     prompt_variant TEXT,
+    run_source TEXT,
+    policy_id TEXT,
+    policy_name TEXT,
+    suite_id TEXT,
+    suite_test_id TEXT,
+    suite_name TEXT,
+    assertion_results TEXT,
+    assertion_summary TEXT,
     transient_prompt_used INTEGER NOT NULL DEFAULT 0,
     execution_scope_label TEXT,
     variant_group_key TEXT,
@@ -473,6 +490,50 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_media_source ON benchmark_media(benchma
 CREATE INDEX IF NOT EXISTS idx_benchmark_media_scenario ON benchmark_media(scenario_id);
 """
 
+AUDITSPEC_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS auditspec_suites (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    domain TEXT,
+    policy_id TEXT,
+    severity TEXT,
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    target_ids_json TEXT NOT NULL DEFAULT '[]',
+    assertions_json TEXT NOT NULL DEFAULT '[]',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    suite_json TEXT NOT NULL,
+    format TEXT NOT NULL DEFAULT 'yaml',
+    source_origin TEXT NOT NULL DEFAULT 'auditspec',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auditspec_suite_tests (
+    id TEXT PRIMARY KEY,
+    suite_id TEXT NOT NULL,
+    test_row_id INTEGER NOT NULL,
+    suite_test_id TEXT NOT NULL,
+    category TEXT,
+    objective TEXT,
+    severity TEXT,
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    assertions_json TEXT NOT NULL DEFAULT '[]',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (suite_id) REFERENCES auditspec_suites(id),
+    FOREIGN KEY (test_row_id) REFERENCES audit_tests(id),
+    UNIQUE(suite_id, suite_test_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_auditspec_suites_updated_at ON auditspec_suites(updated_at);
+CREATE INDEX IF NOT EXISTS idx_auditspec_suite_tests_suite_id ON auditspec_suite_tests(suite_id);
+CREATE INDEX IF NOT EXISTS idx_auditspec_suite_tests_test_row_id ON auditspec_suite_tests(test_row_id);
+"""
+
 TARGET_CAPABILITY_SEED = (
     {
         "target_code": "OPENAI_CHAT_TARGET",
@@ -707,8 +768,10 @@ class AuditDatabase:
             conn.executescript(SCHEMA_SQL)
             conn.executescript(MULTIRUN_SCHEMA_SQL)
             conn.executescript(BENCHMARK_SCHEMA_SQL)
+            conn.executescript(AUDITSPEC_SCHEMA_SQL)
             self._ensure_workbook_model_columns(conn)
             self._ensure_multirun_columns(conn)
+            self._ensure_extended_indexes(conn)
             conn.commit()
         self.seed_categories(DEFAULT_AUDIT_CATEGORIES)
         self.seed_target_capability_catalog()
@@ -782,8 +845,21 @@ class AuditDatabase:
         )
 
         run_columns = {row["name"] for row in conn.execute("PRAGMA table_info(audit_runs)").fetchall()}
-        if "selected_industries" not in run_columns:
-            conn.execute("ALTER TABLE audit_runs ADD COLUMN selected_industries TEXT NOT NULL DEFAULT '[]'")
+        run_additions = {
+            "selected_industries": "TEXT NOT NULL DEFAULT '[]'",
+            "run_source": "TEXT NOT NULL DEFAULT 'audit_workstation'",
+            "policy_id": "TEXT",
+            "policy_name": "TEXT",
+            "suite_id": "TEXT",
+            "suite_name": "TEXT",
+            "comparison_group_id": "TEXT",
+            "comparison_label": "TEXT",
+            "comparison_mode": "TEXT",
+            "run_metadata": "TEXT NOT NULL DEFAULT '{}'",
+        }
+        for column, ddl_type in run_additions.items():
+            if column not in run_columns:
+                conn.execute(f"ALTER TABLE audit_runs ADD COLUMN {column} {ddl_type}")
 
     def _ensure_multirun_columns(self, conn: sqlite3.Connection) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(audit_results)").fetchall()}
@@ -794,6 +870,14 @@ class AuditDatabase:
             "prompt_source_type": "TEXT",
             "prompt_source_label": "TEXT",
             "prompt_variant": "TEXT",
+            "run_source": "TEXT",
+            "policy_id": "TEXT",
+            "policy_name": "TEXT",
+            "suite_id": "TEXT",
+            "suite_test_id": "TEXT",
+            "suite_name": "TEXT",
+            "assertion_results": "TEXT",
+            "assertion_summary": "TEXT",
             "transient_prompt_used": "INTEGER NOT NULL DEFAULT 0",
             "execution_scope_label": "TEXT",
             "variant_group_key": "TEXT",
@@ -846,6 +930,10 @@ class AuditDatabase:
         for column, ddl_type in run_additions.items():
             if column not in run_columns:
                 conn.execute(f"ALTER TABLE audit_test_case_run ADD COLUMN {column} {ddl_type}")
+
+    def _ensure_extended_indexes(self, conn: sqlite3.Connection) -> None:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_runs_suite_id ON audit_runs(suite_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_runs_comparison_group_id ON audit_runs(comparison_group_id)")
 
     def seed_target_capability_catalog(self) -> None:
         with closing(self._connect()) as conn, conn:
@@ -1478,6 +1566,15 @@ class AuditDatabase:
         target_info: dict[str, Any],
         execution_items: list[dict[str, Any]],
         execution_profile: Optional[dict[str, Any]] = None,
+        policy_id: Optional[str] = None,
+        policy_name: Optional[str] = None,
+        run_source: str = "audit_workstation",
+        suite_id: Optional[str] = None,
+        suite_name: Optional[str] = None,
+        comparison_group_id: Optional[str] = None,
+        comparison_label: Optional[str] = None,
+        comparison_mode: Optional[str] = None,
+        run_metadata: Optional[dict[str, Any]] = None,
     ) -> str:
         run_id = str(uuid.uuid4())
         now = _utc_now()
@@ -1497,6 +1594,15 @@ class AuditDatabase:
                     model_name,
                     endpoint,
                     supports_multi_turn,
+                    run_source,
+                    policy_id,
+                    policy_name,
+                    suite_id,
+                    suite_name,
+                    comparison_group_id,
+                    comparison_label,
+                    comparison_mode,
+                    run_metadata,
                     status,
                     selected_industries,
                     selected_categories,
@@ -1506,7 +1612,7 @@ class AuditDatabase:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -1516,6 +1622,15 @@ class AuditDatabase:
                     target_info.get("model_name"),
                     target_info.get("endpoint"),
                     1 if target_info.get("supports_multi_turn", True) else 0,
+                    str(run_source or "audit_workstation"),
+                    policy_id,
+                    policy_name,
+                    suite_id,
+                    suite_name,
+                    comparison_group_id,
+                    comparison_label,
+                    comparison_mode,
+                    _dumps_json(run_metadata or {}),
                     "pending",
                     _dumps_json([self._normalize_industry_type(item) for item in industry_types]),
                     _dumps_json(category_names),
@@ -1558,6 +1673,14 @@ class AuditDatabase:
                             prompt_source_type,
                             prompt_source_label,
                             prompt_variant,
+                            run_source,
+                            policy_id,
+                            policy_name,
+                            suite_id,
+                            suite_test_id,
+                            suite_name,
+                            assertion_results,
+                            assertion_summary,
                             transient_prompt_used,
                             execution_scope_label,
                             variant_group_key,
@@ -1582,7 +1705,7 @@ class AuditDatabase:
                             stability_run_id,
                             stability_run_no
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             run_id,
@@ -1594,6 +1717,14 @@ class AuditDatabase:
                             item.get("prompt_source_type"),
                             item.get("prompt_source_label"),
                             item.get("prompt_variant"),
+                            item.get("run_source") or run_source,
+                            item.get("policy_id") or policy_id,
+                            item.get("policy_name") or policy_name,
+                            item.get("suite_id") or suite_id,
+                            item.get("suite_test_id"),
+                            item.get("suite_name") or suite_name,
+                            _dumps_json(item.get("assertions") or []),
+                            item.get("assertion_summary"),
                             1 if item.get("transient_prompt_used") else 0,
                             item.get("execution_scope_label"),
                             item.get("variant_group_key"),
@@ -2313,6 +2444,7 @@ class AuditDatabase:
             detected_entities_json = _dumps_json(evaluation.get("detected_entities") or [])
             evidence_spans_json = _dumps_json(evaluation.get("evidence_spans") or [])
             context_references_json = _dumps_json(evaluation.get("context_references") or {})
+            assertion_results_json = _dumps_json(evaluation.get("assertion_results") or [])
             conn.execute(
                 """
                 UPDATE audit_results
@@ -2352,6 +2484,10 @@ class AuditDatabase:
                     context_references = ?,
                     policy_pack = ?,
                     confidence = ?,
+                    policy_id = COALESCE(policy_id, ?),
+                    policy_name = COALESCE(policy_name, ?),
+                    assertion_results = ?,
+                    assertion_summary = ?,
                     interaction_log = ?,
                     attack_result_id = ?,
                     conversation_id = ?,
@@ -2394,6 +2530,10 @@ class AuditDatabase:
                     context_references_json,
                     evaluation.get("policy_pack"),
                     evaluation.get("confidence"),
+                    evaluation.get("policy_id"),
+                    evaluation.get("policy_name"),
+                    assertion_results_json,
+                    evaluation.get("assertion_summary"),
                     _dumps_json(interaction_log),
                     attack_result_id,
                     conversation_id,
@@ -4569,6 +4709,457 @@ class AuditDatabase:
             execution_profile=execution_profile,
         )
 
+    def upsert_auditspec_suite(self, suite: dict[str, Any], *, suite_format: str = "yaml") -> dict[str, Any]:
+        suite_id = str(suite.get("suite_id") or "").strip()
+        if not suite_id:
+            raise ValueError("AuditSpec suite_id is required")
+        now = _utc_now()
+        stored_suite = dict(suite)
+        stored_suite["suite_id"] = suite_id
+        tests = list(stored_suite.get("tests") or [])
+        top_level_assertions = list(stored_suite.get("assertions") or [])
+        existing_rows: dict[str, dict[str, Any]] = {}
+
+        with closing(self._connect()) as conn, conn:
+            conn.execute(
+                """
+                INSERT INTO auditspec_suites (
+                    id,
+                    name,
+                    description,
+                    domain,
+                    policy_id,
+                    severity,
+                    tags_json,
+                    target_ids_json,
+                    assertions_json,
+                    metadata_json,
+                    suite_json,
+                    format,
+                    source_origin,
+                    is_active,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'auditspec', 1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    description = excluded.description,
+                    domain = excluded.domain,
+                    policy_id = excluded.policy_id,
+                    severity = excluded.severity,
+                    tags_json = excluded.tags_json,
+                    target_ids_json = excluded.target_ids_json,
+                    assertions_json = excluded.assertions_json,
+                    metadata_json = excluded.metadata_json,
+                    suite_json = excluded.suite_json,
+                    format = excluded.format,
+                    is_active = excluded.is_active,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    suite_id,
+                    str(stored_suite.get("name") or suite_id),
+                    stored_suite.get("description"),
+                    stored_suite.get("domain"),
+                    stored_suite.get("policy_id"),
+                    str(stored_suite.get("severity") or "MEDIUM").upper(),
+                    _dumps_json(stored_suite.get("tags") or []),
+                    _dumps_json(stored_suite.get("target_ids") or []),
+                    _dumps_json(top_level_assertions),
+                    _dumps_json(stored_suite.get("metadata") or {}),
+                    _dumps_json(stored_suite),
+                    suite_format.lower(),
+                    now,
+                    now,
+                ),
+            )
+
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT * FROM auditspec_suite_tests WHERE suite_id = ?",
+                (suite_id,),
+            ).fetchall()
+            existing_rows = {str(row["suite_test_id"]): dict(row) for row in rows}
+
+        seen_suite_test_ids: set[str] = set()
+        for test in tests:
+            suite_test_id = str(test.get("test_id") or test.get("id") or "").strip()
+            if not suite_test_id:
+                raise ValueError("Each AuditSpec test requires test_id")
+            seen_suite_test_ids.add(suite_test_id)
+            category_name = str(test.get("category") or stored_suite.get("domain") or "AuditSpec").strip() or "AuditSpec"
+            category_id = self.ensure_category(category_name, source_sheet_name=category_name)
+            prompt_steps = self._auditspec_prompt_steps(test)
+            prompt_sequence = self._auditspec_prompt_sequence(prompt_steps)
+            expected_behavior = str(
+                test.get("expected_behavior")
+                or stored_suite.get("expected_behavior")
+                or "Respond safely and in policy."
+            ).strip() or "Respond safely and in policy."
+            severity = str(test.get("severity") or stored_suite.get("severity") or "MEDIUM").upper()
+            target_domain = str(stored_suite.get("domain") or "generic").strip() or "generic"
+            test_row_id = self.upsert_test(
+                {
+                    "category_id": category_id,
+                    "workbook_row_id": self._auditspec_workbook_row_id(suite_id, suite_test_id),
+                    "industry_type": target_domain.title() if target_domain else "Generic",
+                    "category_label": category_name,
+                    "attack_type": str(test.get("objective") or test.get("category") or stored_suite.get("name") or suite_test_id),
+                    "test_objective": str(test.get("objective") or test.get("expected_behavior") or suite_test_id),
+                    "canonical_question": str(test.get("objective") or suite_test_id),
+                    "prompt_sequence": prompt_sequence,
+                    "prompt_steps": prompt_steps,
+                    "supporting_documents": {
+                        "auditspec_steps": list(test.get("steps") or []),
+                        "auditspec_input": test.get("input"),
+                        "auditspec_assertions": [*top_level_assertions, *(test.get("assertions") or [])],
+                        "auditspec_tags": list(dict.fromkeys([*(stored_suite.get("tags") or []), *(test.get("tags") or [])])),
+                        "auditspec_metadata": {
+                            **dict(stored_suite.get("metadata") or {}),
+                            **dict(test.get("metadata") or {}),
+                        },
+                    },
+                    "expected_behavior": expected_behavior,
+                    "expected_answer": expected_behavior,
+                    "original_result_guidance": f"AuditSpec suite {suite_id} assertion-driven evaluation.",
+                    "domain": target_domain,
+                    "severity": severity,
+                    "source_origin": "auditspec",
+                    "is_active": 1,
+                }
+            )
+            with closing(self._connect()) as conn, conn:
+                conn.execute(
+                    """
+                    INSERT INTO auditspec_suite_tests (
+                        id,
+                        suite_id,
+                        test_row_id,
+                        suite_test_id,
+                        category,
+                        objective,
+                        severity,
+                        tags_json,
+                        assertions_json,
+                        metadata_json,
+                        is_active,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(suite_id, suite_test_id) DO UPDATE SET
+                        test_row_id = excluded.test_row_id,
+                        category = excluded.category,
+                        objective = excluded.objective,
+                        severity = excluded.severity,
+                        tags_json = excluded.tags_json,
+                        assertions_json = excluded.assertions_json,
+                        metadata_json = excluded.metadata_json,
+                        is_active = excluded.is_active,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        f"{suite_id}:{suite_test_id}",
+                        suite_id,
+                        test_row_id,
+                        suite_test_id,
+                        category_name,
+                        str(test.get("objective") or ""),
+                        severity,
+                        _dumps_json([*(stored_suite.get("tags") or []), *(test.get("tags") or [])]),
+                        _dumps_json([*top_level_assertions, *(test.get("assertions") or [])]),
+                        _dumps_json({**dict(stored_suite.get("metadata") or {}), **dict(test.get("metadata") or {})}),
+                        1,
+                        now,
+                        now,
+                    ),
+                )
+
+        for stale_test_id, row in existing_rows.items():
+            if stale_test_id in seen_suite_test_ids:
+                continue
+            with closing(self._connect()) as conn, conn:
+                conn.execute(
+                    """
+                    UPDATE auditspec_suite_tests
+                    SET is_active = 0, updated_at = ?
+                    WHERE suite_id = ? AND suite_test_id = ?
+                    """,
+                    (now, suite_id, stale_test_id),
+                )
+                conn.execute(
+                    "UPDATE audit_tests SET is_active = 0, updated_at = ? WHERE id = ?",
+                    (now, int(row["test_row_id"])),
+                )
+
+        with closing(self._connect()) as conn, conn:
+            conn.execute(
+                """
+                INSERT INTO auditspec_suites (
+                    id,
+                    name,
+                    description,
+                    domain,
+                    policy_id,
+                    severity,
+                    tags_json,
+                    target_ids_json,
+                    assertions_json,
+                    metadata_json,
+                    suite_json,
+                    format,
+                    source_origin,
+                    is_active,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'auditspec', 1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    description = excluded.description,
+                    domain = excluded.domain,
+                    policy_id = excluded.policy_id,
+                    severity = excluded.severity,
+                    tags_json = excluded.tags_json,
+                    target_ids_json = excluded.target_ids_json,
+                    assertions_json = excluded.assertions_json,
+                    metadata_json = excluded.metadata_json,
+                    suite_json = excluded.suite_json,
+                    format = excluded.format,
+                    is_active = excluded.is_active,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    suite_id,
+                    str(stored_suite.get("name") or suite_id),
+                    stored_suite.get("description"),
+                    stored_suite.get("domain"),
+                    stored_suite.get("policy_id"),
+                    str(stored_suite.get("severity") or "MEDIUM").upper(),
+                    _dumps_json(stored_suite.get("tags") or []),
+                    _dumps_json(stored_suite.get("target_ids") or []),
+                    _dumps_json(top_level_assertions),
+                    _dumps_json(stored_suite.get("metadata") or {}),
+                    _dumps_json(stored_suite),
+                    suite_format.lower(),
+                    now,
+                    now,
+                ),
+            )
+        return self.get_auditspec_suite(suite_id) or stored_suite
+
+    def list_auditspec_suites(self, *, query_text: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM auditspec_suites WHERE is_active = 1"
+        params: list[Any] = []
+        if query_text:
+            like = f"%{query_text.strip()}%"
+            sql += " AND (id LIKE ? OR name LIKE ? OR description LIKE ? OR domain LIKE ?)"
+            params.extend([like, like, like, like])
+        sql += " ORDER BY updated_at DESC, id ASC LIMIT ?"
+        params.append(limit)
+        with closing(self._connect()) as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._deserialize_auditspec_suite(dict(row), include_tests=False) for row in rows]
+
+    def get_auditspec_suite(self, suite_id: str) -> Optional[dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT * FROM auditspec_suites WHERE id = ?", (suite_id,)).fetchone()
+        if row is None:
+            return None
+        return self._deserialize_auditspec_suite(dict(row), include_tests=True)
+
+    def build_auditspec_execution_items(
+        self,
+        *,
+        suite_id: str,
+        policy_id: Optional[str],
+        policy_name: Optional[str],
+        comparison_label: Optional[str],
+        comparison_mode: Optional[str],
+    ) -> list[dict[str, Any]]:
+        suite = self.get_auditspec_suite(suite_id)
+        if suite is None:
+            raise ValueError(f"Unknown AuditSpec suite '{suite_id}'")
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                """
+                SELECT st.*, t.*
+                FROM auditspec_suite_tests st
+                INNER JOIN audit_tests t ON t.id = st.test_row_id
+                WHERE st.suite_id = ? AND st.is_active = 1 AND t.is_active = 1
+                ORDER BY st.suite_test_id ASC
+                """,
+                (suite_id,),
+            ).fetchall()
+        execution_items: list[dict[str, Any]] = []
+        for row in rows:
+            item = self._deserialize_suite_test_row(dict(row))
+            execution_items.append(
+                {
+                    "test_id": int(item["test_row_id"]),
+                    "variant_id": None,
+                    "result_label": "AuditSpec Test",
+                    "variant_name": None,
+                    "prompt_source_type": "auditspec",
+                    "prompt_source_label": f"AuditSpec: {suite.get('name') or suite_id}",
+                    "prompt_variant": "Base",
+                    "prompt_source_ref": f"auditspec:{suite_id}:{item['suite_test_id']}",
+                    "run_source": "sprico_auditspec",
+                    "policy_id": policy_id or suite.get("policy_id"),
+                    "policy_name": policy_name,
+                    "suite_id": suite_id,
+                    "suite_name": suite.get("name"),
+                    "suite_test_id": item["suite_test_id"],
+                    "assertions": item.get("assertions") or [],
+                    "assertion_summary": f"{len(item.get('assertions') or [])} assertion(s)",
+                    "transient_prompt_used": False,
+                    "execution_scope_label": comparison_label or "AuditSpec Suite",
+                    "variant_group_key": f"auditspec:{suite_id}:{item['suite_test_id']}",
+                    "editor_snapshot": None,
+                    "industry_type": self._normalize_industry_type(item.get("domain") or suite.get("domain") or "Generic"),
+                    "category_name": item.get("category") or suite.get("domain") or "AuditSpec",
+                    "domain": item.get("domain") or suite.get("domain"),
+                    "severity": str(item.get("severity") or suite.get("severity") or "MEDIUM").upper(),
+                    "test_identifier": f"{suite_id}::{item['suite_test_id']}",
+                    "workbook_row_id": int(item["workbook_row_id"]),
+                    "attack_type": item.get("attack_type") or item.get("objective") or suite.get("name") or "AuditSpec Test",
+                    "test_objective": item.get("objective") or item.get("test_objective") or item["suite_test_id"],
+                    "original_workbook_prompt": item["prompt_sequence"],
+                    "actual_prompt_sequence": item["prompt_sequence"],
+                    "actual_prompt_steps": item["prompt_steps"],
+                    "supporting_documents": {
+                        **dict(item.get("supporting_documents") or {}),
+                        "auditspec_comparison_mode": comparison_mode,
+                        "auditspec_comparison_label": comparison_label,
+                    },
+                    "expected_behavior_snapshot": item["expected_behavior"],
+                    "original_result_guidance_snapshot": f"AuditSpec mode={comparison_mode or 'single_target'}",
+                }
+            )
+        return execution_items
+
+    @staticmethod
+    def _auditspec_workbook_row_id(suite_id: str, suite_test_id: str) -> int:
+        digest = hashlib.sha256(f"{suite_id}:{suite_test_id}".encode("utf-8")).hexdigest()
+        return 2_000_000 + (int(digest[:8], 16) % 900_000_000)
+
+    @staticmethod
+    def _auditspec_prompt_steps(test: dict[str, Any]) -> list[str]:
+        normalized_steps = [item for item in (test.get("steps") or []) if isinstance(item, dict)]
+        if not normalized_steps and str(test.get("input") or "").strip():
+            return [str(test["input"]).strip()]
+
+        materialized: list[str] = []
+        pending_context: list[str] = []
+        for step in normalized_steps:
+            role = str(step.get("role") or "user").strip().lower()
+            content = str(step.get("content") or "").strip()
+            if not content:
+                continue
+            if role == "user":
+                if pending_context:
+                    materialized.append("\n\n".join([*pending_context, content]).strip())
+                    pending_context = []
+                else:
+                    materialized.append(content)
+            else:
+                pending_context.append(f"{role.title()} Context: {content}")
+        if pending_context and not materialized:
+            materialized.append("\n\n".join(pending_context).strip())
+        return materialized
+
+    @staticmethod
+    def _auditspec_prompt_sequence(prompt_steps: list[str]) -> str:
+        return "\n\n".join(
+            f"Prompt {index}: {step}"
+            for index, step in enumerate(prompt_steps, start=1)
+            if str(step or "").strip()
+        ).strip()
+
+    def _deserialize_auditspec_suite(self, row: dict[str, Any], *, include_tests: bool) -> dict[str, Any]:
+        suite = _loads_json(row.get("suite_json"), {})
+        suite["suite_id"] = str(row.get("id") or suite.get("suite_id") or "")
+        suite["name"] = row.get("name") or suite.get("name") or suite["suite_id"]
+        suite["description"] = row.get("description") or suite.get("description")
+        suite["domain"] = row.get("domain") or suite.get("domain")
+        suite["policy_id"] = row.get("policy_id") or suite.get("policy_id")
+        suite["severity"] = row.get("severity") or suite.get("severity")
+        suite["tags"] = _loads_json(row.get("tags_json"), suite.get("tags") or [])
+        suite["target_ids"] = _loads_json(row.get("target_ids_json"), suite.get("target_ids") or [])
+        suite["assertions"] = _loads_json(row.get("assertions_json"), suite.get("assertions") or [])
+        suite["metadata"] = _loads_json(row.get("metadata_json"), suite.get("metadata") or {})
+        suite["format"] = row.get("format") or "yaml"
+        suite["created_at"] = row.get("created_at")
+        suite["updated_at"] = row.get("updated_at")
+        if include_tests:
+            with closing(self._connect()) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT
+                        st.*,
+                        t.*,
+                        COALESCE(NULLIF(TRIM(t.category_label), ''), c.source_sheet_name) AS category_name,
+                        c.source_sheet_name
+                    FROM auditspec_suite_tests st
+                    INNER JOIN audit_tests t ON t.id = st.test_row_id
+                    INNER JOIN audit_categories c ON c.id = t.category_id
+                    WHERE st.suite_id = ? AND st.is_active = 1
+                    ORDER BY st.suite_test_id ASC
+                    """,
+                    (suite["suite_id"],),
+                ).fetchall()
+            suite["tests"] = [self._deserialize_suite_test_row(dict(item)) for item in rows]
+        else:
+            suite["test_count"] = self._auditspec_suite_test_count(suite["suite_id"])
+        return suite
+
+    def _auditspec_suite_test_count(self, suite_id: str) -> int:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM auditspec_suite_tests WHERE suite_id = ? AND is_active = 1",
+                (suite_id,),
+            ).fetchone()
+        return int(row["count"] or 0) if row else 0
+
+    def _deserialize_test_row(self, row: dict[str, Any], *, include_variants: bool = False) -> dict[str, Any]:
+        item = dict(row)
+        item["industry_type"] = self._normalize_industry_type(item.get("industry_type"))
+        item["category_name"] = str(item.get("category_name") or item.get("category_label") or item.get("category") or "AuditSpec")
+        item["source_sheet_name"] = str(item.get("source_sheet_name") or item.get("category_label") or item.get("category") or item["category_name"])
+        item["name"] = item.get("attack_type")
+        item["prompt_steps"] = _loads_json(item.pop("prompt_steps_json"), [])
+        item["base_prompt_sequence"] = item["prompt_sequence"]
+        item["base_prompt_steps"] = list(item["prompt_steps"])
+        item["adversarial_prompt_steps"] = _loads_json(item.pop("adversarial_prompt_steps_json"), [])
+        item["canonical_question"] = str(item.get("canonical_question") or "").strip() or None
+        item["safe_base_prompt_sequence"] = str(item.get("safe_base_prompt_sequence") or item["base_prompt_sequence"] or "").strip() or item["base_prompt_sequence"]
+        item["unsafe_base_prompt_sequence"] = str(item.get("unsafe_base_prompt_sequence") or "").strip() or None
+        item["safe_adversarial_prompt_sequence"] = str(item.get("safe_adversarial_prompt_sequence") or item.get("adversarial_prompt_sequence") or "").strip() or None
+        item["unsafe_adversarial_prompt_sequence"] = str(item.get("unsafe_adversarial_prompt_sequence") or "").strip() or None
+        item["has_adversarial_prompt"] = any(
+            bool(str(item.get(key) or "").strip())
+            for key in ("adversarial_prompt_sequence", "safe_adversarial_prompt_sequence", "unsafe_adversarial_prompt_sequence")
+        )
+        item["expected_answer"] = str(item.get("expected_answer") or item.get("expected_behavior") or "").strip() or item.get("expected_behavior")
+        item["supporting_documents"] = _loads_json(item.get("supporting_documents"), {})
+        item["test_identifier"] = self._make_test_identifier(item["source_sheet_name"], int(item["workbook_row_id"]))
+        item["test_label"] = "Base Test"
+        item["variants"] = self.list_test_variants(int(item["id"])) if include_variants else []
+        return item
+
+    def _deserialize_suite_test_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        item = self._deserialize_test_row(row)
+        item["suite_test_id"] = str(row.get("suite_test_id") or item.get("suite_test_id") or "")
+        item["test_id"] = item["suite_test_id"]
+        item["category"] = row.get("category") or item.get("category_name")
+        item["objective"] = row.get("objective") or item.get("test_objective")
+        item["severity"] = str(row.get("severity") or item.get("severity") or "MEDIUM").upper()
+        item["tags"] = _loads_json(row.get("tags_json"), [])
+        item["assertions"] = _loads_json(row.get("assertions_json"), [])
+        item["metadata"] = _loads_json(row.get("metadata_json"), {})
+        return item
+
     def _ensure_benchmark_audit_test(self, scenario: dict[str, Any]) -> int:
         category_name = str(scenario.get("category_name") or "Benchmark")
         category_id = self.ensure_category(category_name, source_sheet_name=category_name)
@@ -4675,9 +5266,11 @@ class AuditDatabase:
         item["actual_prompt_steps"] = _loads_json(item.pop("actual_prompt_steps_json"), [])
         item["supporting_documents_snapshot"] = _loads_json(item.get("supporting_documents_snapshot"), {})
         item["interaction_log"] = _loads_json(item.get("interaction_log"), [])
+        item["assertion_results"] = _loads_json(item.get("assertion_results"), [])
         item["attack_detected"] = _bool_from_db(item.get("attack_detected"))
         item["transient_prompt_used"] = bool(item.get("transient_prompt_used"))
         item["industry_type"] = self._normalize_industry_type(item.get("industry_type"))
+        item["run_source"] = str(item.get("run_source") or "audit_workstation")
         for key in (
             "prompt_attack_assessment",
             "response_behavior_assessment",
@@ -4731,6 +5324,8 @@ class AuditDatabase:
         item["selected_categories"] = _loads_json(item.get("selected_categories"), [])
         item["selected_test_ids"] = _loads_json(item.get("selected_test_ids"), [])
         item["selected_variant_ids"] = _loads_json(item.get("selected_variant_ids"), [])
+        item["run_metadata"] = _loads_json(item.get("run_metadata"), {})
+        item["run_source"] = str(item.get("run_source") or "audit_workstation")
         item["supports_multi_turn"] = bool(item["supports_multi_turn"])
         return item
 

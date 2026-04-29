@@ -156,7 +156,7 @@ export default function RedPage() {
       </header>
 
       <PageHelp>
-        Current engine: SpriCO-native campaign runner. Demo mock target is active; real configured HTTP target execution is partial and permission-gated. DeepTeam, promptfoo, and PyRIT orchestrator runtime modes are not implemented in this phase.
+        Current engine: SpriCO-native campaign runner. Demo mock target is active; real configured HTTP target execution is partial and permission-gated. DeepTeam and PyRIT orchestrator runtime modes are not implemented here. promptfoo runtime is optional under Benchmark Library, not Red Team Campaigns.
       </PageHelp>
 
       <ErrorMessage error={error} />
@@ -260,7 +260,7 @@ export default function RedPage() {
               garak, DeepTeam, promptfoo, PyRIT scorers, and optional judge models are evidence sources only. Final Verdict Authority is locked to SpriCO PolicyDecisionEngine.
             </div>
             <div className="sprico-message">
-              Roadmap: real PyRIT orchestrator mode, SpriCO AuditSpec / promptfoo-style assertions, DeepTeam adapter, and judge evidence with PHI-safe controls.
+              Roadmap: real PyRIT orchestrator mode for Red campaigns, DeepTeam adapter, and judge evidence with PHI-safe controls. promptfoo runtime lives under Benchmark Library and remains evidence-only.
             </div>
             <div className="sprico-grid">
               <div className="sprico-kpi">

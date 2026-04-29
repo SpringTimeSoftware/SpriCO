@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AuditFindingsFilters } from '../../App'
-import { auditApi, garakApi } from '../../services/api'
+import { auditApi, garakApi, spricoRunsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
-import type { AuditDashboardResponse, GarakScannerReportSummary } from '../../types'
+import type { AuditDashboardResponse, GarakScannerReportSummary, SpriCORunSummary } from '../../types'
 import './auditPlatform.css'
 
 interface DashboardPageProps {
@@ -12,17 +12,20 @@ interface DashboardPageProps {
 export default function DashboardPage({ onOpenRun }: DashboardPageProps) {
   const [dashboard, setDashboard] = useState<AuditDashboardResponse | null>(null)
   const [scannerSummary, setScannerSummary] = useState<GarakScannerReportSummary | null>(null)
+  const [runSummary, setRunSummary] = useState<SpriCORunSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [response, scannerResponse] = await Promise.all([
+        const [response, scannerResponse, unifiedRuns] = await Promise.all([
           auditApi.getDashboard(),
           garakApi.getReportSummary().catch(() => null),
+          spricoRunsApi.summary().catch(() => null),
         ])
         setDashboard(response)
         setScannerSummary(scannerResponse)
+        setRunSummary(unifiedRuns)
       } catch (err) {
         setError(toApiError(err).detail)
       }
@@ -75,6 +78,34 @@ export default function DashboardPage({ onOpenRun }: DashboardPageProps) {
             <SummaryCard label="Warn Count" value={dashboard.totals.warn_count.toString()} detail="WARN verdicts" tone="warn" />
             <SummaryCard label="Critical Findings" value={dashboard.totals.critical_findings.toString()} detail="Critical severity FAIL/WARN" tone="critical" />
           </section>
+
+          {runSummary && (
+            <section className="audit-panel">
+              <div className="audit-panel-header">
+                <div>
+                  <div className="audit-panel-title">Unified Run Coverage</div>
+                  <div className="audit-note">
+                    Unified run coverage counts interactive audit, structured audit, benchmark replay, AuditSpec, promptfoo runtime, scanner, red campaign, Shield, and condition simulation records. No-finding runs count as coverage without becoming Findings.
+                  </div>
+                </div>
+              </div>
+              <div className="audit-panel-body">
+                <section className="audit-kpi-grid">
+                  <SummaryCard label="All Run Records" value={String(runSummary.total_runs)} detail="Unified registry" />
+                  <SummaryCard label="No-Finding Runs" value={String(runSummary.coverage.no_finding_runs)} detail="Coverage only" tone="pass" />
+                  <SummaryCard label="Runs With Findings" value={String(runSummary.coverage.runs_with_findings)} detail="Actionable outcomes" tone="warn" />
+                  <SummaryCard label="Not Evaluated" value={String(runSummary.coverage.not_evaluated_runs)} detail="Timeout / failed / unavailable" tone="fail" />
+                  <SummaryCard label="Evidence Total" value={String(runSummary.coverage.evidence_total)} detail="Evidence records" />
+                  <SummaryCard label="Targets Covered" value={String(runSummary.coverage.targets_covered)} detail="Unique targets" />
+                </section>
+                <div className="audit-structured-grid">
+                  <ScannerBreakdown title="Runs By Type" rows={runSummary.by_run_type.map(item => ({ label: item.label, count: item.count }))} />
+                  <ScannerBreakdown title="Runs By Page" rows={runSummary.by_source_page.map(item => ({ label: item.label, count: item.count }))} />
+                  <ScannerBreakdown title="Runs By Verdict" rows={runSummary.by_final_verdict.map(item => ({ label: item.label, count: item.count }))} />
+                </div>
+              </div>
+            </section>
+          )}
 
           {scannerSummary && (
             <section className="audit-panel">

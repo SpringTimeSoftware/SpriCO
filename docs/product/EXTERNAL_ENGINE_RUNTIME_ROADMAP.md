@@ -31,7 +31,7 @@ DeepTeam runtime execution is not implemented in this phase. A future optional a
 
 Status: deferred, metadata/status only.
 
-promptfoo runtime execution is not implemented in this phase. SpriCO-native AuditSpec/assertions should be built first. A future adapter may import/export promptfoo-style assertions, but assertion results must remain evidence only.
+promptfoo runtime execution is now available as an optional Benchmark Library adapter. It remains evidence-only, imports results into the unified run/evidence/finding model, and does not override SpriCO PolicyDecisionEngine as final verdict authority. Red Team Campaigns still do not execute promptfoo as a native campaign runtime.
 
 ## Red Team Campaigns
 

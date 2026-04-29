@@ -13,7 +13,9 @@ from typing import Any
 from audit.scorer import evaluate_response
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.backend.sprico.evidence_store import SpriCOEvidenceStore
+from pyrit.backend.sprico.findings import SpriCOFindingStore, finding_requires_action
 from pyrit.backend.sprico.policy_store import SpriCOPolicyStore
+from pyrit.backend.sprico.runs import SpriCORunRegistry
 from pyrit.backend.sprico.storage import JsonStorageBackend, StorageBackend, get_storage_backend
 
 
@@ -78,7 +80,13 @@ class SpriCORedStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._backend = backend or (JsonStorageBackend(path=self.path) if path is not None else get_storage_backend())
         self._evidence_store = SpriCOEvidenceStore(backend=self._backend)
+        self._finding_store = SpriCOFindingStore(backend=self._backend, evidence_store=self._evidence_store)
         self._policy_store = SpriCOPolicyStore(backend=self._backend)
+        self._run_registry = SpriCORunRegistry(
+            backend=self._backend,
+            evidence_store=self._evidence_store,
+            finding_store=self._finding_store,
+        )
         if path is not None and not self.path.exists():
             self.path.write_text(json.dumps({"scans": {}}, indent=2), encoding="utf-8")
 
@@ -119,6 +127,7 @@ class SpriCORedStore:
 
         scan = {
             "id": scan_id,
+            "run_id": f"red_campaign:{scan_id}",
             "target_id": target_id,
             "recon_context": dict(payload.get("recon_context") or {}),
             "objective_ids": selected_ids,
@@ -140,7 +149,8 @@ class SpriCORedStore:
         self._backend.upsert_record("scans", scan_id, scan)
         self._backend.upsert_record("scan_results", scan_id, {"id": scan_id, "scan_id": scan_id, "results": results, "risk": scan["risk"]})
         for finding in findings:
-            self._backend.upsert_record("findings", finding["id"], finding)
+            self._finding_store.upsert_finding(finding)
+        self._run_registry.record_red_scan(scan)
         return scan
 
     def get_scan(self, scan_id: str) -> dict[str, Any] | None:
@@ -229,6 +239,10 @@ class SpriCORedStore:
             }
             stored_evidence = self._evidence_store.append_event(
                 {
+                    "evidence_id": result["turn_id"],
+                    "run_id": f"red_campaign:{scan_id}",
+                    "run_type": "red_campaign",
+                    "source_page": "red",
                     "finding_id": result["turn_id"],
                     "engine": "sprico.red",
                     "engine_id": "sprico_red_team_campaigns",
@@ -240,7 +254,10 @@ class SpriCORedStore:
                     "target_type": result["target_type"],
                     "scan_id": scan_id,
                     "policy_id": policy.get("id"),
+                    "policy_name": policy.get("name"),
                     "policy_context": policy_context,
+                    "raw_input": scenario["prompt"],
+                    "raw_output": scenario["response"],
                     "raw_engine_result": result,
                     "matched_signals": result["matched_signals"],
                     "final_verdict": result["verdict"],
@@ -251,18 +268,46 @@ class SpriCORedStore:
             )
             result["evidence_id"] = stored_evidence["finding_id"]
             results.append(result)
-            if result["verdict"] in {"FAIL", "WARN", "NEEDS_REVIEW"}:
+            if finding_requires_action(
+                final_verdict=result["verdict"],
+                violation_risk=result["violation_risk"],
+                data_sensitivity=result["data_sensitivity"],
+                policy_context=policy_context,
+            ):
                 finding = {
                     "id": f"finding_{result['turn_id']}",
+                    "finding_id": f"finding_{result['turn_id']}",
+                    "run_id": f"red_campaign:{scan_id}",
+                    "run_type": "red_campaign",
                     "scan_id": scan_id,
                     "turn_id": result["turn_id"],
                     "objective_id": scenario["objective_id"],
+                    "target_id": target_id,
+                    "target_name": result["target_name"],
+                    "target_type": result["target_type"],
                     "verdict": result["verdict"],
+                    "final_verdict": result["verdict"],
                     "violation_risk": result["violation_risk"],
                     "data_sensitivity": result["data_sensitivity"],
                     "policy_id": policy.get("id"),
+                    "policy_name": policy.get("name"),
+                    "source_page": "red",
+                    "engine_id": "sprico_red_team_campaigns",
+                    "engine_name": "SpriCO Red Team Campaigns",
+                    "evidence_ids": [stored_evidence["finding_id"]],
                     "explanation": result["explanation"],
                     "evidence_id": stored_evidence["finding_id"],
+                    "status": "open",
+                    "review_status": "pending",
+                    "severity": str(result["violation_risk"] or "MEDIUM").upper(),
+                    "title": f"Red campaign objective triggered: {scenario['objective_id']}",
+                    "description": result["explanation"],
+                    "root_cause": result["explanation"],
+                    "prompt_excerpt": scenario["prompt"],
+                    "response_excerpt": scenario["response"],
+                    "matched_signals": result["matched_signals"],
+                    "policy_context": policy_context,
+                    "legacy_source_ref": {"collection": "red_scans", "id": scan_id, "scan_id": scan_id},
                 }
                 findings.append(finding)
             history.append({"turn_id": result["turn_id"], "role": "user", "user_prompt": scenario["prompt"], "content": scenario["prompt"]})
@@ -378,6 +423,10 @@ class SpriCORedStore:
             }
             stored_evidence = self._evidence_store.append_event(
                 {
+                    "evidence_id": result["turn_id"],
+                    "run_id": f"red_campaign:{scan_id}",
+                    "run_type": "red_campaign",
+                    "source_page": "red",
                     "finding_id": result["turn_id"],
                     "engine": "sprico.red",
                     "engine_id": "sprico_red_team_campaigns",
@@ -389,7 +438,10 @@ class SpriCORedStore:
                     "target_type": result["target_type"],
                     "scan_id": scan_id,
                     "policy_id": policy.get("id"),
+                    "policy_name": policy.get("name"),
                     "policy_context": policy_context,
+                    "raw_input": prompt,
+                    "raw_output": response,
                     "raw_engine_result": result,
                     "matched_signals": result["matched_signals"],
                     "final_verdict": result["verdict"],
@@ -400,19 +452,47 @@ class SpriCORedStore:
             )
             result["evidence_id"] = stored_evidence["finding_id"]
             results.append(result)
-            if result["verdict"] in {"FAIL", "WARN", "NEEDS_REVIEW"}:
+            if finding_requires_action(
+                final_verdict=result["verdict"],
+                violation_risk=result["violation_risk"],
+                data_sensitivity=result["data_sensitivity"],
+                policy_context=policy_context,
+            ):
                 findings.append(
                     {
                         "id": f"finding_{result['turn_id']}",
+                        "finding_id": f"finding_{result['turn_id']}",
+                        "run_id": f"red_campaign:{scan_id}",
+                        "run_type": "red_campaign",
                         "scan_id": scan_id,
                         "turn_id": result["turn_id"],
                         "objective_id": objective["id"],
+                        "target_id": target_id,
+                        "target_name": result["target_name"],
+                        "target_type": result["target_type"],
                         "verdict": result["verdict"],
+                        "final_verdict": result["verdict"],
                         "violation_risk": result["violation_risk"],
                         "data_sensitivity": result["data_sensitivity"],
                         "policy_id": policy.get("id"),
+                        "policy_name": policy.get("name"),
+                        "source_page": "red",
+                        "engine_id": "sprico_red_team_campaigns",
+                        "engine_name": "SpriCO Red Team Campaigns",
+                        "evidence_ids": [stored_evidence["finding_id"]],
                         "explanation": result["explanation"],
                         "evidence_id": stored_evidence["finding_id"],
+                        "status": "open",
+                        "review_status": "pending",
+                        "severity": str(result["violation_risk"] or "MEDIUM").upper(),
+                        "title": f"Red campaign objective triggered: {objective['id']}",
+                        "description": result["explanation"],
+                        "root_cause": result["explanation"],
+                        "prompt_excerpt": prompt,
+                        "response_excerpt": response,
+                        "matched_signals": result["matched_signals"],
+                        "policy_context": policy_context,
+                        "legacy_source_ref": {"collection": "red_scans", "id": scan_id, "scan_id": scan_id},
                     }
                 )
             history.append({"turn_id": result["turn_id"], "role": "user", "user_prompt": prompt, "content": prompt})

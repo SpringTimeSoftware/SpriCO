@@ -26,11 +26,13 @@ COLLECTIONS = (
     "scan_results",
     "findings",
     "evidence_items",
+    "runs",
     "audit_history",
     "shield_events",
     "garak_runs",
     "garak_artifacts",
     "red_scans",
+    "promptfoo_runs",
 )
 
 DEFAULT_POLICY_IDS = ("policy_public_default", "policy_hospital_strict_v1")
