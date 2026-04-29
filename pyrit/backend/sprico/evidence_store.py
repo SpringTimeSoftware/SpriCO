@@ -27,6 +27,8 @@ class SpriCOEvidenceStore:
         raw_result = event.get("raw_result") or event.get("raw_engine_result") or {}
         normalized_signal = event.get("normalized_signal") or event.get("matched_signals") or []
         policy_context = event.get("policy_context") or {}
+        source_metadata = _dict(event.get("source_metadata"))
+        promptfoo_catalog_snapshot = _dict(event.get("promptfoo_catalog_snapshot"))
         authorization_context = event.get("authorization_context") or {
             "policy_mode": (event.get("sprico_final_verdict") or {}).get("policy_mode") or policy_context.get("policy_mode"),
             "access_context": (event.get("sprico_final_verdict") or {}).get("access_context") or policy_context.get("access_context"),
@@ -64,6 +66,7 @@ class SpriCOEvidenceStore:
             "policy_id": event.get("policy_id"),
             "policy_name": event.get("policy_name"),
             "policy_context": policy_context,
+            "source_metadata": source_metadata,
             "authorization_context": authorization_context,
             "raw_input": event.get("raw_input"),
             "raw_output": event.get("raw_output"),
@@ -79,6 +82,19 @@ class SpriCOEvidenceStore:
             "normalized_signals": event.get("normalized_signals") or normalized_signal,
             "matched_signals": event.get("matched_signals") or normalized_signal,
             "matched_conditions": event.get("matched_conditions") or [],
+            "promptfoo_version": event.get("promptfoo_version") or event.get("engine_version"),
+            "promptfoo_catalog_hash": event.get("promptfoo_catalog_hash"),
+            "promptfoo_catalog_snapshot": promptfoo_catalog_snapshot,
+            "promptfoo_plugin_id": event.get("promptfoo_plugin_id"),
+            "promptfoo_plugin_label": event.get("promptfoo_plugin_label"),
+            "promptfoo_strategy_id": event.get("promptfoo_strategy_id"),
+            "promptfoo_strategy_label": event.get("promptfoo_strategy_label"),
+            "promptfoo_policy_name": event.get("promptfoo_policy_name"),
+            "promptfoo_policy_text_hash": event.get("promptfoo_policy_text_hash"),
+            "promptfoo_policy_text_redacted": event.get("promptfoo_policy_text_redacted"),
+            "promptfoo_intent_name": event.get("promptfoo_intent_name"),
+            "promptfoo_intent_text_hash": event.get("promptfoo_intent_text_hash"),
+            "promptfoo_intent_category": event.get("promptfoo_intent_category"),
             "final_verdict": event.get("final_verdict"),
             "violation_risk": event.get("violation_risk"),
             "data_sensitivity": event.get("data_sensitivity"),
@@ -164,3 +180,7 @@ def _string_list(value: Any) -> list[str]:
         seen.add(text)
         items.append(text)
     return items
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}

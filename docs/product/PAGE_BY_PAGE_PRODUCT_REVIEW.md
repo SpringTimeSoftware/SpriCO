@@ -306,21 +306,24 @@ It is intentionally truthful rather than aspirational:
 ## 13. Benchmark Library
 
 - User-facing purpose:
-  Manage reusable benchmark/reference scenarios before they are executed.
+  Manage reusable benchmark/reference scenarios and reusable AuditSpec/promptfoo test definitions before they are executed.
 - Actual current implementation:
-  Multi-tab reference library with taxonomy, scenario selection, compare, replay, import, and case-study gallery behaviors.
+  Multi-tab library with public/internal/imported reference assets plus an AuditSpec workspace. The AuditSpec workspace supports pasted/imported SpriCO-native YAML/JSON suites, repeatable AuditSpec execution, optional promptfoo runtime launches, custom promptfoo policies/intents, and comparison-oriented reporting in one place.
 - Data source(s) it reads:
-  Benchmark library tables, target registry, compare/replay APIs.
+  Benchmark library tables, target registry, compare/replay APIs, AuditSpec suite storage, promptfoo catalog/status, policies, unified runs.
 - Data it writes:
-  Imported benchmark packs and replayed structured audit runs.
+  Imported benchmark packs, imported AuditSpec suites, replayed structured audit runs, optional promptfoo runtime launches, and linked unified run/evidence/finding records.
 - What makes sense:
-  It clearly distinguishes reference material from evidence.
+  It clearly distinguishes reusable definitions from evidence. AuditSpec and promptfoo stay under Benchmark Library because both feed the same unified runs, Evidence Center, Findings, dashboard coverage, and Activity History.
 - What is missing:
-  A smaller/simpler split between library browsing and replay admin.
+  Deeper saved comparison reporting and richer library search/filtering for large suite catalogs.
 - What is misleading:
-  Nothing severe, but it is a large page with mixed responsibilities.
+  Nothing severe if the page keeps saying three things clearly:
+  1. Benchmark Library stores reusable definitions, not proof.
+  2. AuditSpec is SpriCO-native YAML/JSON and is imported by paste/validate/import on this page.
+  3. promptfoo runtime is optional external evidence generation, not final verdict authority.
 - Recommended change:
-  Keep the reference-vs-evidence distinction and simplify the control density over time.
+  Keep the reference-vs-evidence distinction, keep promptfoo inside the Benchmark/AuditSpec workspace, and continue improving section-level clarity rather than splitting the workflow into disconnected pages.
 - Status:
   `active`
 

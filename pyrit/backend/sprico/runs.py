@@ -38,6 +38,8 @@ class SpriCORunRegistry:
         self._is_backfilling = True
         try:
             self._finding_store.sync_existing_records()
+            evidence_events = self._backend.list_records("evidence_items")
+            finding_items = self._finding_store.list_findings(limit=10_000)
             for run in self._backend.list_records("garak_runs"):
                 self.record_garak_run(run)
             for run in self._backend.list_records("red_scans"):
@@ -48,9 +50,13 @@ class SpriCORunRegistry:
                 self.record_shield_check(event)
             for simulation in self._backend.list_records("condition_simulations"):
                 self.record_condition_simulation(simulation)
-            for evidence in self._backend.list_records("evidence_items"):
+            for evidence in evidence_events:
                 if str(evidence.get("evidence_type") or "").lower() == "interactive_audit_turn":
-                    self.record_interactive_audit_session(evidence)
+                    self.record_interactive_audit_session(
+                        evidence,
+                        evidence_events=evidence_events,
+                        finding_items=finding_items,
+                    )
             seen_run_ids: set[str] = set()
             for run in self._audit_db.get_recent_runs(limit=500):
                 run_id = str(run.get("job_id") or run.get("id") or "")
@@ -58,15 +64,23 @@ class SpriCORunRegistry:
                     continue
                 seen_run_ids.add(run_id)
                 detail = self._audit_db.get_run_detail(run_id) or run
-                self.record_audit_run(detail)
+                self.record_audit_run(
+                    detail,
+                    evidence_events=evidence_events,
+                    finding_items=finding_items,
+                )
             for run in self._audit_db.get_recent_interactive_runs(limit=500):
                 run_id = str(run.get("job_id") or run.get("id") or "")
                 if not run_id or run_id in seen_run_ids:
                     continue
                 seen_run_ids.add(run_id)
                 detail = self._audit_db.get_run_detail(run_id) or run
-                self.record_audit_run(detail)
-            self._backfill_evidence_links()
+                self.record_audit_run(
+                    detail,
+                    evidence_events=evidence_events,
+                    finding_items=finding_items,
+                )
+            self._backfill_evidence_links(evidence_events=evidence_events)
         finally:
             self._is_backfilling = False
 
@@ -137,7 +151,7 @@ class SpriCORunRegistry:
         matches = []
         for event in self._evidence_store.list_events(limit=10_000):
             if _event_matches_run(event, run):
-                matches.append(event)
+                matches.append(self.enrich_evidence_event(event))
         matches.sort(key=lambda item: str(item.get("created_at") or item.get("timestamp") or ""), reverse=True)
         return matches[:limit]
 
@@ -148,7 +162,7 @@ class SpriCORunRegistry:
         matches = []
         for item in self._finding_store.list_findings(limit=10_000):
             if _finding_matches_run(item, run):
-                matches.append(item)
+                matches.append(self.enrich_finding_record(item))
         matches.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
         return matches[:limit]
 
@@ -245,6 +259,11 @@ class SpriCORunRegistry:
         finding_ids = list(run.get("finding_ids") or [])
         summary = _as_dict(run.get("sprico_summary"))
         promptfoo = _as_dict(run.get("promptfoo"))
+        selected_catalog = _as_dict(promptfoo.get("selected_catalog_snapshot"))
+        selected_plugins = list(selected_catalog.get("plugins") or [])
+        selected_strategies = list(selected_catalog.get("strategies") or [])
+        custom_policies = list(run.get("custom_policies") or selected_catalog.get("custom_policies") or [])
+        custom_intents = list(run.get("custom_intents") or selected_catalog.get("custom_intents") or [])
         record = {
             "id": f"promptfoo_runtime:{scan_id}",
             "run_id": f"promptfoo_runtime:{scan_id}",
@@ -272,12 +291,18 @@ class SpriCORunRegistry:
                 "plugin_group_id": run.get("plugin_group_id"),
                 "plugin_group_label": run.get("plugin_group_label"),
                 "plugin_ids": list(run.get("plugin_ids") or []),
+                "plugin_labels": [item.get("label") for item in selected_plugins if item.get("label")],
                 "strategy_ids": list(run.get("strategy_ids") or []),
+                "strategy_labels": [item.get("label") for item in selected_strategies if item.get("label")],
+                "custom_policy_count": len(custom_policies),
+                "custom_intent_count": len(custom_intents),
                 "suite_id": run.get("suite_id"),
                 "suite_name": run.get("suite_name"),
                 "comparison_group_id": run.get("comparison_group_id"),
                 "comparison_mode": run.get("comparison_mode"),
                 "comparison_label": run.get("comparison_label"),
+                "catalog_hash": promptfoo.get("catalog_hash"),
+                "promptfoo_version": promptfoo.get("version"),
                 "rows_total": int(summary.get("rows_total") or 0),
                 "pass_count": int(summary.get("pass_count") or 0),
                 "warn_count": int(summary.get("warn_count") or 0),
@@ -290,6 +315,9 @@ class SpriCORunRegistry:
                 "scan_id": scan_id,
                 "purpose": run.get("purpose"),
                 "promptfoo": promptfoo,
+                "promptfoo_catalog": selected_catalog,
+                "custom_policies": custom_policies,
+                "custom_intents": custom_intents,
                 "suite_id": run.get("suite_id"),
                 "suite_name": run.get("suite_name"),
                 "comparison_group_id": run.get("comparison_group_id"),
@@ -376,21 +404,29 @@ class SpriCORunRegistry:
         }
         return self._upsert_run(record)
 
-    def record_interactive_audit_session(self, evidence: dict[str, Any]) -> dict[str, Any]:
+    def record_interactive_audit_session(
+        self,
+        evidence: dict[str, Any],
+        *,
+        evidence_events: list[dict[str, Any]] | None = None,
+        finding_items: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         conversation_id = str(evidence.get("conversation_id") or evidence.get("scan_id") or "")
+        events = evidence_events if evidence_events is not None else self._backend.list_records("evidence_items")
         run_id = f"interactive_audit:{conversation_id}"
         run_evidence = [
             item
-            for item in self._backend.list_records("evidence_items")
+            for item in events
             if str(item.get("conversation_id") or item.get("scan_id") or "") == conversation_id
             and str(item.get("evidence_type") or "").lower() == "interactive_audit_turn"
         ]
         pass_count = sum(1 for item in run_evidence if str(item.get("final_verdict") or "").upper() == "PASS")
         warn_count = sum(1 for item in run_evidence if str(item.get("final_verdict") or "").upper() == "WARN")
         fail_count = sum(1 for item in run_evidence if str(item.get("final_verdict") or "").upper() == "FAIL")
+        findings = finding_items if finding_items is not None else self._finding_store.list_findings(limit=10_000)
         linked_findings = [
             item
-            for item in self._finding_store.list_findings(limit=10_000)
+            for item in findings
             if str(item.get("run_id") or "") == run_id or conversation_id in _run_identifiers(item)
         ]
         first = run_evidence[0] if run_evidence else evidence
@@ -434,7 +470,13 @@ class SpriCORunRegistry:
         }
         return self._upsert_run(record)
 
-    def record_audit_run(self, run: dict[str, Any]) -> dict[str, Any]:
+    def record_audit_run(
+        self,
+        run: dict[str, Any],
+        *,
+        evidence_events: list[dict[str, Any]] | None = None,
+        finding_items: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         results = list(run.get("results") or [])
         has_interactive = any(str(item.get("prompt_source_type") or "").lower() == "interactive" for item in results)
         has_benchmark = any(
@@ -460,8 +502,10 @@ class SpriCORunRegistry:
             run_type = "audit_workstation"
             source_page = "audit"
             unified_run_id = f"audit_workstation:{run.get('job_id') or run.get('id')}"
-        evidence_count = len([item for item in self._backend.list_records("evidence_items") if _audit_evidence_matches_run(item, run)])
-        findings_count = len([item for item in self._finding_store.list_findings(limit=10_000) if _audit_finding_matches_run(item, run, unified_run_id)])
+        events = evidence_events if evidence_events is not None else self._backend.list_records("evidence_items")
+        findings = finding_items if finding_items is not None else self._finding_store.list_findings(limit=10_000)
+        evidence_count = len([item for item in events if _audit_evidence_matches_run(item, run)])
+        findings_count = len([item for item in findings if _audit_finding_matches_run(item, run, unified_run_id)])
         policy_id = _audit_policy_id(results, run=run)
         policy_name = _first_non_empty(
             run.get("policy_name"),
@@ -552,22 +596,92 @@ class SpriCORunRegistry:
         self._backend.upsert_record("runs", normalized["run_id"], normalized)
         return normalized
 
-    def _backfill_evidence_links(self) -> None:
-        for event in self._backend.list_records("evidence_items"):
+    def enrich_evidence_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        promptfoo_like = _is_promptfoo_evidence_event(event)
+        needs_run = not event.get("run_id") or not event.get("run_type") or not event.get("source_page") or not event.get("policy_name")
+        needs_promptfoo = promptfoo_like and _promptfoo_event_needs_detail(event)
+        if not needs_run and not needs_promptfoo:
+            return event
+        run = self._infer_run_for_event(event)
+        if run is None:
+            return event
+        enriched = dict(event)
+        if needs_run:
+            enriched.setdefault("run_id", run["run_id"])
+            enriched.setdefault("run_type", run["run_type"])
+            enriched.setdefault("source_page", run["source_page"])
+            enriched.setdefault("policy_name", run.get("policy_name"))
+        if needs_promptfoo:
+            enriched = _enrich_promptfoo_evidence_event(enriched, run)
+        return enriched
+
+    def enrich_finding_record(self, finding: dict[str, Any]) -> dict[str, Any]:
+        needs_run = not finding.get("run_id") or not finding.get("run_type")
+        needs_target = not finding.get("target_id")
+        needs_source = not finding.get("source_page") or str(finding.get("source_page") or "").lower() == "findings"
+        needs_policy = not finding.get("policy_name")
+        needs_engine = str(finding.get("engine_id") or "").lower() in {"", "sprico"}
+        if not any((needs_run, needs_target, needs_source, needs_policy, needs_engine)):
+            return finding
+        run = self._infer_run_for_finding(finding)
+        if run is None:
+            return finding
+        enriched = dict(finding)
+        if needs_run:
+            enriched["run_id"] = run["run_id"]
+            enriched["run_type"] = run["run_type"]
+        if needs_target:
+            enriched["target_id"] = run.get("target_id")
+            enriched["target_name"] = run.get("target_name")
+            enriched["target_type"] = run.get("target_type")
+        if needs_source:
+            enriched["source_page"] = run["source_page"]
+        if needs_policy:
+            enriched["policy_name"] = run.get("policy_name")
+        if needs_engine:
+            enriched["engine_id"] = run.get("engine_id") or enriched.get("engine_id")
+            enriched["engine_name"] = run.get("engine_name") or enriched.get("engine_name")
+        if str(enriched.get("domain") or "").lower() == "generic" and run.get("domain"):
+            enriched["domain"] = run.get("domain")
+        return enriched
+
+    def _backfill_evidence_links(self, *, evidence_events: list[dict[str, Any]] | None = None) -> None:
+        events = evidence_events if evidence_events is not None else self._backend.list_records("evidence_items")
+        for event in events:
             evidence_id = str(event.get("evidence_id") or event.get("finding_id") or event.get("id") or "")
+            if not evidence_id:
+                continue
+            enriched = self.enrich_evidence_event(event)
             updates: dict[str, Any] = {}
-            run = self._infer_run_for_event(event)
-            if run is not None:
-                if not event.get("run_id"):
-                    updates["run_id"] = run["run_id"]
-                if not event.get("run_type"):
-                    updates["run_type"] = run["run_type"]
-                if not event.get("source_page"):
-                    updates["source_page"] = run["source_page"]
-                if not event.get("policy_name"):
-                    updates["policy_name"] = run.get("policy_name")
-            if updates:
-                self._evidence_store.update_event(evidence_id, updates)
+            for key in (
+                "run_id",
+                "run_type",
+                "source_page",
+                "policy_name",
+                "engine_version",
+                "source_metadata",
+                "promptfoo_version",
+                "promptfoo_catalog_hash",
+                "promptfoo_catalog_snapshot",
+                "promptfoo_plugin_id",
+                "promptfoo_plugin_label",
+                "promptfoo_strategy_id",
+                "promptfoo_strategy_label",
+            ):
+                if key not in enriched:
+                    continue
+                before = event.get(key)
+                after = enriched.get(key)
+                if before == after:
+                    continue
+                if after is None:
+                    continue
+                if isinstance(after, dict) and not after:
+                    continue
+                updates[key] = after
+            if not updates:
+                continue
+            self._evidence_store.update_event(evidence_id, updates)
 
     def _infer_run_for_event(self, event: dict[str, Any]) -> dict[str, Any] | None:
         run_id = str(event.get("run_id") or "").strip()
@@ -588,6 +702,152 @@ class SpriCORunRegistry:
             conversation_id = str(event.get("conversation_id") or event.get("scan_id") or "")
             return self._lookup_run(f"interactive_audit:{conversation_id}")
         return None
+
+    def _infer_run_for_finding(self, finding: dict[str, Any]) -> dict[str, Any] | None:
+        run_id = str(finding.get("run_id") or "").strip()
+        if run_id:
+            return self._lookup_run(run_id)
+        candidates = [
+            _run_candidate_from_identifier("promptfoo_runtime", finding.get("scan_id")),
+            _run_candidate_from_identifier("garak_scan", finding.get("scan_id")),
+            _run_candidate_from_identifier("red_campaign", finding.get("scan_id")),
+            _run_candidate_from_identifier("interactive_audit", finding.get("conversation_id")),
+        ]
+        legacy = _as_dict(finding.get("legacy_source_ref"))
+        candidates.extend(
+            [
+                _run_candidate_from_identifier("promptfoo_runtime", legacy.get("scan_id")),
+                _run_candidate_from_identifier("garak_scan", legacy.get("scan_id")),
+                _run_candidate_from_identifier("red_campaign", legacy.get("scan_id")),
+                _run_candidate_from_identifier("interactive_audit", legacy.get("conversation_id")),
+                str(legacy.get("run_id") or "").strip() or None,
+            ]
+        )
+        for candidate in candidates:
+            if not candidate:
+                continue
+            run = self._lookup_run(candidate)
+            if run is not None:
+                return run
+        for evidence_id in finding.get("evidence_ids") or []:
+            event = self._evidence_store.get_event(str(evidence_id))
+            if event is None:
+                continue
+            run = self._infer_run_for_event(event)
+            if run is not None:
+                return run
+        return None
+
+
+def _is_promptfoo_evidence_event(event: dict[str, Any]) -> bool:
+    engine = str(event.get("engine_id") or event.get("engine") or "").lower()
+    evidence_type = str(event.get("evidence_type") or "").lower()
+    run_type = str(event.get("run_type") or "").lower()
+    run_id = str(event.get("run_id") or "").lower()
+    return "promptfoo" in engine or "promptfoo" in evidence_type or run_type == "promptfoo_runtime" or run_id.startswith("promptfoo_runtime:")
+
+
+def _promptfoo_event_needs_detail(event: dict[str, Any]) -> bool:
+    return any(
+        not event.get(key)
+        for key in (
+            "source_metadata",
+            "promptfoo_version",
+            "promptfoo_catalog_hash",
+            "promptfoo_catalog_snapshot",
+            "promptfoo_plugin_id",
+            "promptfoo_plugin_label",
+            "promptfoo_strategy_id",
+            "promptfoo_strategy_label",
+        )
+    )
+
+
+def _enrich_promptfoo_evidence_event(event: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(event)
+    metadata = _as_dict(run.get("metadata"))
+    promptfoo = _as_dict(metadata.get("promptfoo"))
+    catalog_snapshot = _as_dict(metadata.get("promptfoo_catalog"))
+    sprico_final = _as_dict(enriched.get("sprico_final_verdict"))
+    raw_metadata = _as_dict(_as_dict(enriched.get("raw_result")).get("metadata"))
+    coverage = _as_dict(run.get("coverage_summary"))
+
+    selected_plugins = [item for item in catalog_snapshot.get("plugins") or [] if isinstance(item, dict)]
+    selected_strategies = [item for item in catalog_snapshot.get("strategies") or [] if isinstance(item, dict)]
+    plugin_map = {str(item.get("id") or "").strip(): item for item in selected_plugins if str(item.get("id") or "").strip()}
+    strategy_map = {str(item.get("id") or "").strip(): item for item in selected_strategies if str(item.get("id") or "").strip()}
+
+    promptfoo_version = (
+        enriched.get("promptfoo_version")
+        or enriched.get("engine_version")
+        or promptfoo.get("version")
+        or coverage.get("promptfoo_version")
+    )
+    catalog_hash = (
+        enriched.get("promptfoo_catalog_hash")
+        or sprico_final.get("promptfoo_catalog_hash")
+        or promptfoo.get("catalog_hash")
+        or coverage.get("catalog_hash")
+    )
+    plugin_id = (
+        enriched.get("promptfoo_plugin_id")
+        or sprico_final.get("promptfoo_plugin_id")
+        or raw_metadata.get("pluginId")
+        or _first_selected_id(selected_plugins)
+    )
+    strategy_id = (
+        enriched.get("promptfoo_strategy_id")
+        or sprico_final.get("promptfoo_strategy_id")
+        or raw_metadata.get("strategyId")
+        or _first_selected_id(selected_strategies)
+    )
+    plugin_label = (
+        enriched.get("promptfoo_plugin_label")
+        or sprico_final.get("promptfoo_plugin_label")
+        or _catalog_item_label(plugin_map.get(str(plugin_id or "").strip()))
+        or _first_string(coverage.get("plugin_labels"))
+        or plugin_id
+    )
+    strategy_label = (
+        enriched.get("promptfoo_strategy_label")
+        or sprico_final.get("promptfoo_strategy_label")
+        or _catalog_item_label(strategy_map.get(str(strategy_id or "").strip()))
+        or _first_string(coverage.get("strategy_labels"))
+        or strategy_id
+    )
+
+    source_metadata = _as_dict(enriched.get("source_metadata"))
+    if promptfoo_version:
+        source_metadata.setdefault("promptfoo_version", promptfoo_version)
+    if catalog_hash:
+        source_metadata.setdefault("promptfoo_catalog_hash", catalog_hash)
+    if plugin_id:
+        source_metadata.setdefault("promptfoo_plugin_id", plugin_id)
+    if plugin_label:
+        source_metadata.setdefault("promptfoo_plugin_label", plugin_label)
+    if strategy_id:
+        source_metadata.setdefault("promptfoo_strategy_id", strategy_id)
+    if strategy_label:
+        source_metadata.setdefault("promptfoo_strategy_label", strategy_label)
+
+    if promptfoo_version:
+        enriched.setdefault("engine_version", promptfoo_version)
+        enriched["promptfoo_version"] = promptfoo_version
+    if catalog_hash:
+        enriched["promptfoo_catalog_hash"] = catalog_hash
+    if catalog_snapshot:
+        enriched.setdefault("promptfoo_catalog_snapshot", catalog_snapshot)
+    if plugin_id:
+        enriched["promptfoo_plugin_id"] = plugin_id
+    if plugin_label:
+        enriched["promptfoo_plugin_label"] = plugin_label
+    if strategy_id:
+        enriched["promptfoo_strategy_id"] = strategy_id
+    if strategy_label:
+        enriched["promptfoo_strategy_label"] = strategy_label
+    if source_metadata:
+        enriched["source_metadata"] = source_metadata
+    return enriched
 
 
 def normalize_run_record(record: dict[str, Any] | None) -> dict[str, Any]:
@@ -628,6 +888,31 @@ def normalize_run_record(record: dict[str, Any] | None) -> dict[str, Any]:
         "updated_at": str(payload.get("updated_at") or finished_at or now),
     }
     return normalized
+
+
+def _first_selected_id(items: list[dict[str, Any]]) -> str | None:
+    for item in items:
+        item_id = str(item.get("id") or "").strip()
+        if item_id:
+            return item_id
+    return None
+
+
+def _catalog_item_label(item: dict[str, Any] | None) -> str | None:
+    if not isinstance(item, dict):
+        return None
+    label = str(item.get("label") or "").strip()
+    return label or None
+
+
+def _first_string(value: Any) -> str | None:
+    if not isinstance(value, list):
+        return None
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            return text
+    return None
 
 
 def _counter_rows(items: list[dict[str, Any]], *, key: str) -> list[dict[str, Any]]:
@@ -802,6 +1087,11 @@ def _first_non_empty(*values: Any) -> Any:
         if text:
             return value
     return None
+
+
+def _run_candidate_from_identifier(prefix: str, value: Any) -> str | None:
+    text = str(value or "").strip()
+    return f"{prefix}:{text}" if text else None
 
 
 def _utc_now() -> str:

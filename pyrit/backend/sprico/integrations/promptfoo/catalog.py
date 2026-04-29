@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 PLUGIN_GROUPS: list[dict[str, Any]] = [
@@ -191,6 +193,7 @@ PLUGIN_LABELS: dict[str, str] = {
     "privacy": "Privacy",
     "contracts": "Contracts",
     "policy": "Policy",
+    "intent": "Custom Intent",
     "legal": "Legal",
     "compliance": "Compliance",
     "rag-document-exfiltration": "RAG Document Exfiltration",
@@ -211,32 +214,60 @@ SUPPORTED_MODES = [
 ]
 
 
-def build_promptfoo_catalog(*, discovered_plugins: list[str] | None = None) -> dict[str, Any]:
+def build_promptfoo_catalog(
+    *,
+    discovered_plugins: list[str] | None = None,
+    promptfoo_version: str | None = None,
+    discovered_at: str | None = None,
+) -> dict[str, Any]:
     plugin_ids = _normalize_plugins(discovered_plugins)
     plugin_groups = [_build_group(group, plugin_ids=plugin_ids) for group in PLUGIN_GROUPS]
-    if plugin_ids:
-        unmatched = [plugin_id for plugin_id in plugin_ids if not any(_plugin_in_group(plugin_id, group["id"]) for group in PLUGIN_GROUPS)]
-        if unmatched:
-            plugin_groups[-1]["plugins"].extend(_plugin_payload(plugin_id, default_selected=False) for plugin_id in unmatched)
-    return {
+    unmatched = [plugin_id for plugin_id in plugin_ids if not any(_plugin_in_group(plugin_id, group["id"]) for group in PLUGIN_GROUPS)]
+    if unmatched:
+        plugin_groups[-1]["plugins"].extend(
+            _plugin_payload(
+                plugin_id,
+                default_selected=False,
+                group_id=str(plugin_groups[-1]["id"]),
+                group_label=str(plugin_groups[-1]["label"]),
+            )
+            for plugin_id in sorted(unmatched)
+        )
+    plugins = _flatten_plugins(plugin_groups)
+    catalog = {
+        "promptfoo_version": promptfoo_version,
+        "discovered_at": discovered_at,
         "plugin_groups": plugin_groups,
+        "plugins": plugins,
         "strategies": STRATEGIES,
         "supported_modes": SUPPORTED_MODES,
         "final_verdict_capable": False,
         "promptfoo_is_optional": True,
     }
+    catalog["catalog_hash"] = _catalog_hash(catalog)
+    return catalog
 
 
 def _build_group(group: dict[str, Any], *, plugin_ids: list[str]) -> dict[str, Any]:
     if plugin_ids:
-        plugins = [plugin_id for plugin_id in plugin_ids if _plugin_in_group(plugin_id, str(group["id"]))]
+        available = [plugin_id for plugin_id in plugin_ids if _plugin_in_group(plugin_id, str(group["id"]))]
+        default_plugins = [plugin_id for plugin_id in group["default_plugins"] if plugin_id in available]
+        discovered_extras = sorted(plugin_id for plugin_id in available if plugin_id not in default_plugins)
+        plugins = [*default_plugins, *discovered_extras]
         if not plugins:
             plugins = list(group["default_plugins"])
     else:
         plugins = list(group["default_plugins"])
     payloads = []
     for index, plugin_id in enumerate(plugins):
-        payloads.append(_plugin_payload(plugin_id, default_selected=index < min(2, len(plugins))))
+        payloads.append(
+            _plugin_payload(
+                plugin_id,
+                default_selected=index < min(2, len(plugins)),
+                group_id=str(group["id"]),
+                group_label=str(group["label"]),
+            )
+        )
     return {
         "id": group["id"],
         "label": group["label"],
@@ -262,11 +293,14 @@ def _plugin_in_group(plugin_id: str, group_id: str) -> bool:
     return False
 
 
-def _plugin_payload(plugin_id: str, *, default_selected: bool) -> dict[str, Any]:
+def _plugin_payload(plugin_id: str, *, default_selected: bool, group_id: str, group_label: str) -> dict[str, Any]:
     return {
         "id": plugin_id,
         "label": PLUGIN_LABELS.get(plugin_id, plugin_id.replace("-", " ").replace(":", " / ").title()),
         "default_selected": default_selected,
+        "group_id": group_id,
+        "group_label": group_label,
+        "available": True,
     }
 
 
@@ -280,3 +314,31 @@ def _normalize_plugins(discovered_plugins: list[str] | None) -> list[str]:
         seen.add(text)
         items.append(text)
     return items
+
+
+def _flatten_plugins(plugin_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for group in plugin_groups:
+        for plugin in group.get("plugins", []):
+            plugin_id = str(plugin.get("id") or "").strip()
+            if not plugin_id or plugin_id in seen:
+                continue
+            seen.add(plugin_id)
+            items.append(dict(plugin))
+    items.sort(key=lambda item: (str(item.get("group_label") or ""), str(item.get("label") or ""), str(item.get("id") or "")))
+    return items
+
+
+def _catalog_hash(catalog: dict[str, Any]) -> str:
+    payload = {
+        "promptfoo_version": catalog.get("promptfoo_version"),
+        "plugin_groups": catalog.get("plugin_groups"),
+        "plugins": catalog.get("plugins"),
+        "strategies": catalog.get("strategies"),
+        "supported_modes": catalog.get("supported_modes"),
+        "final_verdict_capable": False,
+        "promptfoo_is_optional": True,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]

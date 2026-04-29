@@ -615,6 +615,9 @@ export interface PromptfooStatus {
   supported_modes: string[]
   final_verdict_capable: boolean
   error?: string | null
+  provider_credentials?: {
+    openai?: PromptfooProviderCredentialStatus
+  }
   advanced?: {
     executable_path?: string | null
     command?: string[] | null
@@ -626,10 +629,20 @@ export interface PromptfooStatus {
   }
 }
 
+export interface PromptfooProviderCredentialStatus {
+  configured: boolean
+  source_type: 'environment' | 'secret_ref' | 'target_secret_ref' | 'disabled' | string
+  source_label: string
+  value_visible: boolean
+}
+
 export interface PromptfooPluginOption {
   id: string
   label: string
   default_selected?: boolean
+  group_id?: string
+  group_label?: string
+  available?: boolean
 }
 
 export interface PromptfooPluginGroup {
@@ -649,11 +662,36 @@ export interface PromptfooStrategyOption {
 }
 
 export interface PromptfooCatalog {
+  promptfoo_version?: string | null
+  discovered_at?: string | null
+  catalog_hash: string
   plugin_groups: PromptfooPluginGroup[]
+  plugins: PromptfooPluginOption[]
   strategies: PromptfooStrategyOption[]
   supported_modes: string[]
   final_verdict_capable: boolean
   promptfoo_is_optional: boolean
+}
+
+export interface PromptfooCustomPolicy {
+  policy_id: string
+  policy_name: string
+  policy_text: string
+  severity: 'low' | 'medium' | 'high' | 'critical'
+  num_tests: number
+  domain?: string | null
+  tags?: string[]
+}
+
+export interface PromptfooCustomIntent {
+  intent_id: string
+  intent_name: string
+  prompt_text?: string | null
+  prompt_sequence?: string[]
+  category?: string | null
+  severity: 'low' | 'medium' | 'high' | 'critical'
+  num_tests: number
+  tags?: string[]
 }
 
 export interface PromptfooRuntimeRequest {
@@ -663,6 +701,8 @@ export interface PromptfooRuntimeRequest {
   plugin_group_id: string
   plugin_ids: string[]
   strategy_ids: string[]
+  custom_policies?: PromptfooCustomPolicy[]
+  custom_intents?: PromptfooCustomIntent[]
   suite_id?: string | null
   purpose?: string | null
   num_tests_per_plugin: number

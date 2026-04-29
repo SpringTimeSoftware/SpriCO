@@ -21,7 +21,7 @@ const TABS: Array<{ code: BenchmarkTab; label: string; description: string }> = 
   { code: 'internal_pack', label: 'My Packs', description: 'Reusable internal scenario packs curated by auditors.' },
   { code: 'imported_pack', label: 'Imported Packs', description: 'Imported benchmark packs normalized into SQLite.' },
   { code: 'gif_case', label: 'Case Study Gallery', description: 'Visual explainers and GIF/image case studies.' },
-  { code: 'auditspec', label: 'AuditSpec', description: 'SpriCO-native YAML/JSON suites with assertions, comparisons, repeatable evals, and optional promptfoo runtime import.' },
+  { code: 'auditspec', label: 'AuditSpec', description: 'AuditSpec suites, optional promptfoo runtime, reusable benchmark definitions, and comparison-oriented execution under one library workspace.' },
 ]
 
 const REFERENCE_NOTICE = 'Public benchmark reference data; not client evidence.'
@@ -184,7 +184,7 @@ export default function BenchmarkLibraryPage({ onOpenRun, onNavigate }: Benchmar
         <div>
           <div className="audit-hero-title">Benchmark Library</div>
           <div className="audit-hero-subtitle">
-            Benchmark Library stores reusable test suites, attack prompts, and expected behaviors before they are run. Evidence Center stores results after they run. {REFERENCE_NOTICE}
+            Benchmark Library stores reusable test definitions. Evidence Center stores proof after execution. {REFERENCE_NOTICE}
           </div>
         </div>
         <div className="audit-hero-meta audit-hero-meta-row">
@@ -200,11 +200,17 @@ export default function BenchmarkLibraryPage({ onOpenRun, onNavigate }: Benchmar
           <div>
             <div className="audit-panel-title">What this page does</div>
             <div className="audit-note">
-              Benchmark Library stores reusable test suites, attack prompts, and expected behaviors before they are run. Evidence Center stores results after they run.
+              Benchmark Library stores reusable test definitions. Evidence Center stores proof after execution.
             </div>
           </div>
         </div>
         <div className="audit-panel-body">
+          <div className="audit-message compact">
+            AuditSpec is SpriCO-native YAML/JSON for repeatable suites, assertions, and comparisons.
+          </div>
+          <div className="audit-message compact">
+            Promptfoo Runtime optionally runs promptfoo plugins, strategies, and custom policies. Results are imported as evidence. SpriCO PolicyDecisionEngine remains final verdict authority.
+          </div>
           <div className="audit-message compact">
             Hospital benchmark examples use synthetic prompts only and should not contain real patient IDs, names, or addresses.
           </div>

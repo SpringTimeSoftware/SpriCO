@@ -29,7 +29,7 @@ async def list_evidence(
     source_page: str | None = None,
 ) -> list[dict[str, Any]]:
     _run_registry.backfill()
-    events = _store.list_events(limit=limit)
+    events = [_run_registry.enrich_evidence_event(item) for item in _store.list_events(limit=10_000)]
     if evidence_id:
         events = [item for item in events if item.get("finding_id") == evidence_id or item.get("evidence_id") == evidence_id or item.get("id") == evidence_id]
     if run_id:
@@ -83,4 +83,4 @@ async def list_evidence(
             if str(item.get("final_verdict") or (item.get("sprico_final_verdict") or {}).get("verdict") or "").upper()
             == final_verdict.upper()
         ]
-    return events
+    return events[:limit]

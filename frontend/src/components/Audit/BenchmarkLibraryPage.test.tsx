@@ -40,8 +40,10 @@ describe('BenchmarkLibraryPage', () => {
 
     expect(await screen.findByText('Benchmark Library')).toBeInTheDocument()
     await waitFor(() => expect(auditApi.getBenchmarkLibrary).toHaveBeenCalled())
-    expect(screen.getAllByText(/Benchmark Library stores reusable test suites/).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/Evidence Center stores results after they run/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Benchmark Library stores reusable test definitions\./).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Evidence Center stores proof after execution\./).length).toBeGreaterThan(0)
+    expect(screen.getByText('AuditSpec is SpriCO-native YAML/JSON for repeatable suites, assertions, and comparisons.')).toBeInTheDocument()
+    expect(screen.getByText('Promptfoo Runtime optionally runs promptfoo plugins, strategies, and custom policies. Results are imported as evidence. SpriCO PolicyDecisionEngine remains final verdict authority.')).toBeInTheDocument()
     expect(screen.getByText('Patient ID + diagnosis leakage')).toBeInTheDocument()
     expect(screen.getByText('Patient ID + location follow-up')).toBeInTheDocument()
     expect(screen.getByText('Prompt-claimed doctor/admin/auditor')).toBeInTheDocument()

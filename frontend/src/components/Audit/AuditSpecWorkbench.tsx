@@ -65,8 +65,10 @@ interface AuditSpecWorkbenchProps {
 
 export default function AuditSpecWorkbench({ onOpenRun, onNavigate }: AuditSpecWorkbenchProps) {
   const [suites, setSuites] = useState<AuditSpecSuite[]>([])
+  const [suitesLoaded, setSuitesLoaded] = useState(false)
   const [selectedSuiteId, setSelectedSuiteId] = useState('')
   const [selectedSuite, setSelectedSuite] = useState<AuditSpecSuite | null>(null)
+  const [selectedSuiteLoadError, setSelectedSuiteLoadError] = useState<string | null>(null)
   const [candidateSuiteId, setCandidateSuiteId] = useState('')
   const [targets, setTargets] = useState<TargetInstance[]>([])
   const [policies, setPolicies] = useState<SpriCOPolicy[]>([])
@@ -100,6 +102,40 @@ export default function AuditSpecWorkbench({ onOpenRun, onNavigate }: AuditSpecW
     [auditableTargets, selectedTargetIds],
   )
   const visibleSuite = selectedSuite ?? previewSuite
+  const selectedSuiteTestCount = Number(selectedSuite?.test_count ?? selectedSuite?.tests.length ?? 0)
+  const auditSpecLaunchDisabledReason = useMemo(() => {
+    if (!suitesLoaded) {
+      return null
+    }
+    if (!suites.length && !selectedSuiteId) {
+      return 'Disabled because no AuditSpec suite is imported. Paste YAML or JSON, validate it, and import a suite first.'
+    }
+    if (!selectedSuiteId) {
+      return 'Disabled because no AuditSpec suite is selected.'
+    }
+    if (!selectedSuite || selectedSuiteLoadError) {
+      return 'Disabled because the selected AuditSpec suite is invalid.'
+    }
+    if (selectedTargetObjects.length === 0) {
+      return 'Disabled because no target is selected.'
+    }
+    if (selectedPolicyObjects.length === 0) {
+      return 'Disabled because no policy is selected.'
+    }
+    if (selectedSuiteTestCount === 0) {
+      return 'Disabled because selected suite has 0 runnable tests.'
+    }
+    return null
+  }, [
+    selectedSuite,
+    selectedSuiteId,
+    selectedSuiteLoadError,
+    selectedSuiteTestCount,
+    selectedPolicyObjects.length,
+    selectedTargetObjects.length,
+    suites.length,
+    suitesLoaded,
+  ])
 
   useEffect(() => {
     const load = async () => {
@@ -129,6 +165,8 @@ export default function AuditSpecWorkbench({ onOpenRun, onNavigate }: AuditSpecW
         }
       } catch (err) {
         setError(toApiError(err).detail)
+      } finally {
+        setSuitesLoaded(true)
       }
     }
     void load()
@@ -138,18 +176,23 @@ export default function AuditSpecWorkbench({ onOpenRun, onNavigate }: AuditSpecW
     const loadSuite = async () => {
       if (!selectedSuiteId) {
         setSelectedSuite(null)
+        setSelectedSuiteLoadError(null)
         return
       }
       try {
         const suite = await auditApi.getAuditSpecSuite(selectedSuiteId)
         setSelectedSuite(suite)
+        setSelectedSuiteLoadError(null)
         setError(null)
         setSelectedTargetIds(current => current.length ? current : [...suite.target_ids])
         if (suite.policy_id) {
           setSelectedPolicyIds(current => current.length ? current : [suite.policy_id!])
         }
       } catch (err) {
-        setError(toApiError(err).detail)
+        const detail = toApiError(err).detail
+        setSelectedSuite(null)
+        setSelectedSuiteLoadError(detail)
+        setError(detail)
       }
     }
     void loadSuite()
@@ -305,13 +348,17 @@ export default function AuditSpecWorkbench({ onOpenRun, onNavigate }: AuditSpecW
     }
   }
 
+  function jumpToSection(sectionId: string) {
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   return (
     <section className="audit-benchmark-layout">
       <aside className="audit-panel audit-benchmark-taxonomy">
         <div className="audit-panel-header">
           <div>
             <div className="audit-panel-title">AuditSpec Suites</div>
-            <div className="audit-note">Stored YAML/JSON suites. Import once, then rerun them repeatably against targets and policies.</div>
+            <div className="audit-note">Imported SpriCO-native YAML/JSON suites. Paste, validate, import once, then rerun them repeatably against selected targets and policies.</div>
           </div>
         </div>
         <div className="audit-panel-body audit-benchmark-tree">
@@ -326,42 +373,74 @@ export default function AuditSpecWorkbench({ onOpenRun, onNavigate }: AuditSpecW
               <span>{suite.suite_id} | {suite.test_count ?? suite.tests.length} test(s)</span>
             </button>
           ))}
-          {suites.length === 0 && <div className="audit-muted">No AuditSpec suites imported yet. Validate and import one from the editor.</div>}
+          {suites.length === 0 && <div className="audit-muted">No AuditSpec suites are imported yet. Paste YAML/JSON, validate it, and import a suite first.</div>}
         </div>
       </aside>
 
       <main className="audit-benchmark-main">
         {error && <div className="audit-message error">{error}</div>}
         {statusMessage && <div className="audit-message success">{statusMessage}</div>}
-
+        <div className="audit-message compact">
+          AuditSpec runs SpriCO-native YAML/JSON assertion suites. Promptfoo Runtime optionally runs promptfoo plugins and strategies. Both feed the same unified runs, Evidence Center, Findings, dashboards, and Activity History.
+        </div>
+        <div className="audit-message compact">
+          Benchmark Library stores reusable test definitions. Evidence Center stores proof after execution.
+        </div>
         <section className="audit-panel">
           <div className="audit-panel-header">
             <div>
-              <div className="audit-panel-title">AuditSpec Builder</div>
+              <div className="audit-panel-title">Workspace Sections</div>
+              <div className="audit-note">Benchmark Library keeps AuditSpec suites, promptfoo Runtime, and comparison reporting in one workspace because they feed the same unified runs, Evidence Center, Findings, dashboards, and Activity History.</div>
+            </div>
+          </div>
+          <div className="audit-panel-body audit-benchmark-tabs">
+            <button type="button" className="audit-mode-card" onClick={() => jumpToSection('auditspec-import')}>
+              <strong>Overview</strong>
+              <span>Paste, validate, and import SpriCO-native AuditSpec suites.</span>
+            </button>
+            <button type="button" className="audit-mode-card" onClick={() => jumpToSection('auditspec-launch')}>
+              <strong>AuditSpec Runs</strong>
+              <span>Launch the selected imported suite against chosen targets and policies.</span>
+            </button>
+            <button type="button" className="audit-mode-card" onClick={() => jumpToSection('promptfoo-runtime')}>
+              <strong>Promptfoo Runtime</strong>
+              <span>Optionally run promptfoo plugins, strategies, custom policies, and custom intents as evidence-only coverage.</span>
+            </button>
+            <button type="button" className="audit-mode-card" onClick={() => jumpToSection('auditspec-latest-launch')}>
+              <strong>Comparison Reports</strong>
+              <span>Review the latest run coverage, evidence counts, findings, and comparison grouping.</span>
+            </button>
+          </div>
+        </section>
+
+        <section className="audit-panel" id="auditspec-import">
+          <div className="audit-panel-header">
+            <div>
+              <div className="audit-panel-title">Paste / Import AuditSpec YAML/JSON</div>
               <div className="audit-note">
-                AuditSpec is SpriCO-native, promptfoo-style suite definition and assertion orchestration. The optional promptfoo runtime adapter below imports evidence into the same unified run, evidence, and findings model.
+                AuditSpec is SpriCO-native YAML/JSON for repeatable suites, assertions, and comparisons. Paste YAML or JSON here, validate it, import it into Benchmark Library, then rerun the selected imported suite against targets and policies. File upload is not implemented on this page.
               </div>
             </div>
           </div>
           <div className="audit-panel-body audit-benchmark-import">
             <div className="audit-message compact">
-              AuditSpec runs feed the unified run registry, Evidence Center, Findings when actionable, dashboards, and Activity History. Passing/no-finding runs remain coverage only.
+              Import means SpriCO validates the pasted suite, stores it as a reusable definition, and lets you rerun only the selected imported suite. AuditSpec runs feed the unified run registry, Evidence Center, Findings when actionable, dashboards, and Activity History. Passing/no-finding runs remain coverage only.
             </div>
             <textarea value={suiteContent} onChange={event => setSuiteContent(event.target.value)} placeholder={EXAMPLE_AUDITSPEC} />
             <div className="audit-inline-actions">
               <button type="button" className="audit-secondary-btn" onClick={() => void handleValidate()} disabled={busy || !suiteContent.trim()}>
-                {busy ? 'Working...' : 'Validate Suite'}
+                {busy ? 'Working...' : 'Validate YAML/JSON'}
               </button>
               <button type="button" className="audit-primary-btn audit-primary-btn-inline" onClick={() => void handleImport()} disabled={busy || !suiteContent.trim()}>
-                {busy ? 'Working...' : 'Import Suite'}
+                {busy ? 'Working...' : 'Import YAML/JSON'}
               </button>
-              <span className="audit-note">{previewFormat ? `Last validated format: ${previewFormat.toUpperCase()}` : 'Supports YAML or JSON.'}</span>
+              <span className="audit-note">{previewFormat ? `Last validated format: ${previewFormat.toUpperCase()}` : 'Paste YAML or JSON. Upload is not implemented on this page.'}</span>
             </div>
           </div>
         </section>
 
         <section className="audit-benchmark-detail-grid">
-          <section className="audit-panel">
+          <section className="audit-panel" id="auditspec-selected-suite">
             <div className="audit-panel-header">
               <div>
                 <div className="audit-panel-title">Selected Suite</div>
@@ -384,7 +463,7 @@ export default function AuditSpecWorkbench({ onOpenRun, onNavigate }: AuditSpecW
             </div>
           </section>
 
-          <section className="audit-panel audit-panel-feature">
+          <section className="audit-panel audit-panel-feature" id="auditspec-launch">
             <div className="audit-panel-header">
               <div>
                 <div className="audit-panel-title">Launch AuditSpec Runs</div>
@@ -478,16 +557,22 @@ export default function AuditSpecWorkbench({ onOpenRun, onNavigate }: AuditSpecW
                 </div>
               </div>
               <div className="audit-run-summary">
-                <strong>{selectedTargetObjects.length}</strong> target(s), <strong>{selectedPolicyObjects.length}</strong> policy selection(s), <strong>{visibleSuite?.test_count ?? visibleSuite?.tests.length ?? 0}</strong> suite test(s)
+                <strong>{selectedTargetObjects.length}</strong> target(s), <strong>{selectedPolicyObjects.length}</strong> policy selection(s), <strong>{selectedSuiteTestCount}</strong> selected suite test(s)
               </div>
-              <button type="button" className="audit-primary-btn" onClick={() => void handleLaunchRuns()} disabled={busy || !selectedSuiteId}>
+              {auditSpecLaunchDisabledReason && !busy && (
+                <div className="audit-message compact">
+                  {auditSpecLaunchDisabledReason}
+                </div>
+              )}
+              <button type="button" className="audit-primary-btn" onClick={() => void handleLaunchRuns()} disabled={busy || Boolean(auditSpecLaunchDisabledReason)}>
                 {busy ? 'Starting AuditSpec Runs...' : 'Launch AuditSpec Runs'}
               </button>
             </div>
           </section>
         </section>
 
-        <PromptfooRuntimePanel
+        <div id="promptfoo-runtime">
+          <PromptfooRuntimePanel
           suites={suites}
           selectedSuiteId={selectedSuiteId}
           selectedSuite={selectedSuite}
@@ -495,6 +580,7 @@ export default function AuditSpecWorkbench({ onOpenRun, onNavigate }: AuditSpecW
           policies={policies}
           onNavigate={onNavigate}
         />
+        </div>
 
         <section className="audit-panel">
           <div className="audit-panel-header">
@@ -536,7 +622,7 @@ export default function AuditSpecWorkbench({ onOpenRun, onNavigate }: AuditSpecW
         </section>
 
         {launchResponse && (
-          <section className="audit-panel">
+          <section className="audit-panel" id="auditspec-latest-launch">
             <div className="audit-panel-header">
               <div>
                 <div className="audit-panel-title">Latest Launch</div>

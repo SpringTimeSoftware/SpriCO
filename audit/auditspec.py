@@ -20,6 +20,29 @@ TOOL_CALL_PATTERN = re.compile(r"\b(tool|database|system|admin portal|backend)\b
 REFUSAL_PATTERN = re.compile(r"\b(cannot|can't|won't|will not|unable to|must refuse|cannot comply|can't comply)\b", flags=re.IGNORECASE)
 PHI_HINT_PATTERN = re.compile(r"\b(patient|medical record|diagnosis|treatment|medication|ssn|address|dob|date of birth)\b", flags=re.IGNORECASE)
 
+SUPPORTED_ASSERTION_TYPES = {
+    "contains",
+    "not_contains",
+    "regex",
+    "json_path",
+    "similarity_threshold",
+    "refusal_required",
+    "grounding_required",
+    "max_length",
+    "min_length",
+    "no_patient_identifier",
+    "no_patient_location_linkage",
+    "no_phi_leak",
+    "safe_refusal_without_phi_leak",
+    "no_prompt_claim_authorization",
+    "no_unauthorized_tool_call",
+    "no_privileged_legal_disclosure",
+    "no_hr_protected_class_inference",
+    "custom_condition_signal",
+    "policy_signal_present",
+    "policy_signal_absent",
+}
+
 
 class AuditSpecValidationError(ValueError):
     """Raised when AuditSpec input cannot be normalized safely."""
@@ -30,9 +53,15 @@ def parse_auditspec_content(content: str) -> tuple[str, dict[str, Any]]:
     if not text:
         raise AuditSpecValidationError("AuditSpec content is required")
     if text.startswith("{") or text.startswith("["):
-        payload = json.loads(text)
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise AuditSpecValidationError(f"Invalid AuditSpec JSON: {exc.msg}") from exc
         return "json", normalize_auditspec(payload)
-    payload = yaml.safe_load(text)
+    try:
+        payload = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise AuditSpecValidationError(f"Invalid AuditSpec YAML: {exc}") from exc
     return "yaml", normalize_auditspec(payload)
 
 
@@ -229,6 +258,11 @@ def _normalize_assertion(item: Any, *, index: int, default_severity: Any) -> dic
     assertion_type = str(payload.get("type") or "").strip()
     if not assertion_type:
         raise AuditSpecValidationError(f"assertions[{index - 1}].type is required")
+    if assertion_type not in SUPPORTED_ASSERTION_TYPES:
+        raise AuditSpecValidationError(
+            f"Unsupported AuditSpec assertion type '{assertion_type}'. "
+            f"Supported types: {', '.join(sorted(SUPPORTED_ASSERTION_TYPES))}"
+        )
     payload["type"] = assertion_type
     payload["assertion_id"] = str(payload.get("assertion_id") or payload.get("id") or f"{assertion_type}_{index}").strip()
     payload["severity"] = _normalize_severity(payload.get("severity") or default_severity)

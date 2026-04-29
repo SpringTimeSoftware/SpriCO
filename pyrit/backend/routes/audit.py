@@ -2133,7 +2133,8 @@ async def list_auditspec_suites(
     search: Optional[str] = Query(None, description="Search by suite id, name, description, or domain"),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[AuditSpecSuiteResponse]:
-    return [AuditSpecSuiteResponse(**item) for item in repository.list_auditspec_suites(query_text=search, limit=limit)]
+    query_text = search if isinstance(search, str) else None
+    return [AuditSpecSuiteResponse(**item) for item in repository.list_auditspec_suites(query_text=query_text, limit=limit)]
 
 
 @router.get("/auditspec/suites/{suite_id}", response_model=AuditSpecSuiteResponse)
